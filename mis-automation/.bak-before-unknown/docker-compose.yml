@@ -1,0 +1,70 @@
+# Local / single-host deployment. Nothing here is a secret: values come from .env (copy config/.env.example).
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-mis}
+      POSTGRES_USER: ${POSTGRES_USER:-mis}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mis} -d ${POSTGRES_DB:-mis}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  processor:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-mis}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mis}
+      PROCESSOR_API_KEY: ${PROCESSOR_API_KEY:?set PROCESSOR_API_KEY in .env}
+      MIS_TIMEZONE: ${MIS_TIMEZONE:-Asia/Kolkata}
+      MIS_APPROVED_MIGRATIONS: ${MIS_APPROVED_MIGRATIONS:-}
+      MIS_LOOKBACK_DAYS: ${MIS_LOOKBACK_DAYS:-3}
+      MIS_OVERLAP_HOURS: ${MIS_OVERLAP_HOURS:-6}
+      MIS_AUTO_REGISTER_PARTNERS: ${MIS_AUTO_REGISTER_PARTNERS:-false}
+      MIS_RANGE_END_FUTURE_POLICY: ${MIS_RANGE_END_FUTURE_POLICY:-review}
+      MIS_MANIFEST_PATH: /app/config/expected_reports.yaml
+      MIS_LLM_PROVIDER: ${MIS_LLM_PROVIDER:-none}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      MIS_LLM_MODEL: ${MIS_LLM_MODEL:-claude-sonnet-5-5}
+      MIS_REVIEW_SECRET: ${MIS_REVIEW_SECRET:-}
+      MIS_PUBLIC_BASE_URL: ${MIS_PUBLIC_BASE_URL:-}
+      MIS_REVIEW_TTL_HOURS: ${MIS_REVIEW_TTL_HOURS:-48}
+    volumes:
+      - ./config:/app/config:ro
+    ports:
+      - "127.0.0.1:8080:8080"          # bound to localhost; n8n reaches it over the compose network
+
+  n8n:
+    image: n8nio/n8n:${N8N_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      - processor
+    environment:
+      GENERIC_TIMEZONE: ${MIS_TIMEZONE:-Asia/Kolkata}
+      TZ: ${MIS_TIMEZONE:-Asia/Kolkata}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?set N8N_ENCRYPTION_KEY in .env}
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"       # the workflows read MIS_* from the environment
+      N8N_RESTRICT_FILE_ACCESS_TO: /home/node/.n8n-files
+      MIS_PROCESSOR_URL: http://processor:8080
+      N8N_INTERNAL_URL: http://n8n:5678
+      MIS_DRIVE_FOLDER_ID: ${MIS_DRIVE_FOLDER_ID:?set MIS_DRIVE_FOLDER_ID in .env}
+      MIS_NOTIFY_WEBHOOK_URL: ${MIS_NOTIFY_WEBHOOK_URL:-}
+      MIS_REVIEW_EMAIL_FROM: ${MIS_REVIEW_EMAIL_FROM:-}
+      MIS_REVIEW_EMAIL_TO: ${MIS_REVIEW_EMAIL_TO:-}
+      WEBHOOK_URL: ${N8N_WEBHOOK_URL:-http://localhost:5678/}
+    volumes:
+      - n8ndata:/home/node/.n8n
+    ports:
+      - "127.0.0.1:5678:5678"
+
+volumes:
+  pgdata:
+  n8ndata:

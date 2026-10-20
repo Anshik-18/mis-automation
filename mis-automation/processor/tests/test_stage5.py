@@ -33,7 +33,7 @@ class WindowMath(unittest.TestCase):
 
 
 class Api(PgCase):
-    SETTINGS = {"api_key": KEY}
+    SETTINGS = {"api_key": KEY, "propose_unknown_files": False}       # this class exercises the manual review/resolve path
 
     @classmethod
     def setUpClass(cls):

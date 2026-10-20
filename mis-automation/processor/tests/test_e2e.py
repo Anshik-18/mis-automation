@@ -133,25 +133,24 @@ class EndToEnd(PgCase):
         d = self.drive
         rows = new_rows(3)
         d.put("n1", "newbank_leads_20261019_080000.csv", fx.make_csv(NEW_HEADERS, rows), "2026-10-19T03:00:00Z")
-        self.assertEqual(self.discover_and_process(), [])                       # registered as needs_review: nothing to claim
-        eid, st, why = self.q("SELECT event_id, status, review_reason FROM mis.drive_file_events")[0]
-        self.assertEqual((st, why), ("needs_review", "no_profile_matches_filename"))     # unknown name: nobody guesses a portal
-        code, att = self.srv.call("POST", "/v1/events/attention")
-        self.assertEqual((att["count"], "newbank_leads_20261019_080000.csv" in att["text"]), (1, True))
-        self.assertEqual(self.srv.call("POST", "/v1/events/attention")[1]["count"], 0)    # announced once
-        data = d.download("n1")
-        code, prop = self.propose(eid, data, portal="newbank", create_portal="true", display_name="NewBank")
+        out = self.discover_and_process()                                      # nobody knows this name: a proposal is drafted
+        self.assertEqual((out[0]["outcome"], out[0]["reason"]), ("needs_mapping", "unknown_file"))
+        code, prop = out[0]["proposal"]
         self.assertEqual(code, 200, prop)
+        eid, st, why = self.q("SELECT event_id, status, review_reason FROM mis.drive_file_events")[0]
+        self.assertEqual((st, why), ("needs_mapping", "awaiting_mapping_approval"))
+        self.assertEqual(self.q("SELECT portal_code, is_active FROM mis.reporting_portals WHERE portal_code='newbank'"), [("newbank", False)])
         self.assertEqual((prop["used_llm"], prop["open_questions"]), (True, []))
         self.assertEqual(self.q("SELECT count(*) FROM mis.leads")[0][0], 0)
         self.assertEqual(self.srv.call("POST", f"/v1/mapping/{prop['profile_id']}/approve", {})[0], 400)    # approver is mandatory
         code, appr = self.srv.call("POST", f"/v1/mapping/{prop['profile_id']}/approve", {"approved_by": "ops@example.com"})
         self.assertEqual((code, appr["requeued_events"]), (200, [eid]))
+        self.assertEqual(self.q("SELECT is_active FROM mis.reporting_portals WHERE portal_code='newbank'"), [(True,)])
         out = self.discover_and_process()
         self.assertEqual((out[0]["outcome"], out[0]["rows"]["inserted"]), ("processed", 3))
         d.put("n2", "newbank_leads_20261020_080000.csv", fx.make_csv(NEW_HEADERS, new_rows(2, start=20)), "2026-10-20T03:00:00Z")
         self.assertEqual(self.discover_and_process()[0]["outcome"], "processed")
-        self.assertEqual(self.llm.calls, 1)
+        self.assertEqual(self.llm.calls, 2)               # one column-mapping call + one advisory read of the unknown file
         code, g = self.srv.call("GET", f"/v1/mapping/{prop['profile_id']}")
         self.assertEqual((g["status"], g["proposed_by"]), ("active", "ai"))
         self.assertNotIn("REF-ZQX", repr(g))

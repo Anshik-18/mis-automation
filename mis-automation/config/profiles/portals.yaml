@@ -1,4 +1,6 @@
 # Reporting portals (where reports are downloaded from). Attribution partners are a separate concept.
+# A file is attributed to a portal by the START of its name when its strict pattern no longer matches. The code is always a
+# prefix, case and separators are ignored (cred_me == CredMe == CREDME). Add other spellings with  filename_prefixes: [...]
 portals:
   - {code: credme,        display_name: CredMe}
   - {code: kreditbuddha,  display_name: KreditBuddha}
@@ -7,4 +9,5 @@ portals:
   - {code: digicredit,    display_name: DigiCredit}
   - {code: creditsea,     display_name: CreditSea}
   - {code: paytrust,      display_name: PayTrust}
-  - {code: marketing_tbd, display_name: "Marketing report (portal not yet identified)"}
+  - {code: truefund,      display_name: TrueFund, filename_prefixes: [truefund]}
+  - {code: marketing_tbd, display_name: "Marketing report (portal not yet identified)", filename_prefixes: [marketing]}

@@ -19,7 +19,7 @@
       ],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "mis-webhook-secret",
+          "id": "41lhDxjpRqgQNT6l",
           "name": "MIS Webhook Secret"
         }
       },
@@ -63,7 +63,7 @@
       ],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "mis-processor-key",
+          "id": "WLXS3bmFHTcdKxnX",
           "name": "MIS Processor API Key"
         }
       }
@@ -143,7 +143,7 @@
       ],
       "credentials": {
         "googleDriveOAuth2Api": {
-          "id": "mis-google-drive",
+          "id": "8kpjN5l7nJRdN3TV",
           "name": "MIS Google Drive"
         }
       },
@@ -178,7 +178,7 @@
       ],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "mis-processor-key",
+          "id": "WLXS3bmFHTcdKxnX",
           "name": "MIS Processor API Key"
         }
       }
@@ -240,7 +240,7 @@
       ],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "mis-processor-key",
+          "id": "WLXS3bmFHTcdKxnX",
           "name": "MIS Processor API Key"
         }
       }
@@ -330,14 +330,14 @@
       ],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "mis-processor-key",
+          "id": "WLXS3bmFHTcdKxnX",
           "name": "MIS Processor API Key"
         }
       }
     },
     {
       "parameters": {
-        "jsCode": "// Text for humans. Contains file names, ids and counts only - never customer data.\nconst j = $input.first().json;\nconst orig = $('Attach File Again').first().json;\nconst name = orig.filename || ('event ' + orig.event_id);\nlet text;\nif (j.notification) {\n  text = `[MIS] ${name}: new or changed file layout. ${j.notification}`;\n} else if (j.error) {\n  text = `[MIS] ${name}: mapping proposal could not be created (${j.error}). A person must submit a mapping.`;\n} else {\n  text = `[MIS] ${name}: ${orig.outcome || 'unknown outcome'}.`;\n}\nreturn [{ json: { text } }];\n"
+        "jsCode": "// Text for humans. Contains file names, ids and counts only - never customer data.\nconst j = $input.first().json;\nconst orig = $('Attach File Again').first().json;\nconst name = orig.filename || ('event ' + orig.event_id);\nlet text;\nlet email = {};\nif (j.notification) {\n  // the processor already wrote a plain-language change summary (column names and counts only) and a review link\n  text = `[MIS] ${name}: new or changed file layout.\n\n${j.review_markdown || j.notification}` + (j.review_url ? `\n\nReview and approve: ${j.review_url}` : '');\n  email = { email_subject: j.email_subject, email_text: j.email_text, email_html: j.email_html };\n} else if (j.error) {\n  text = `[MIS] ${name}: mapping proposal could not be created (${j.error}). A person must submit a mapping.`;\n} else {\n  text = `[MIS] ${name}: ${orig.outcome || 'unknown outcome'}.`;\n}\nreturn [{ json: { text, ...email } }];\n"
       },
       "id": "5b7f82a6-d795-5dc0-b831-a972417bab09",
       "name": "Compose Notification",
@@ -404,6 +404,64 @@
     },
     {
       "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "ced4afad-49d5-5287-aff6-01fa7658dafa",
+              "leftValue": "={{ ($('Compose Notification').first().json.email_html && $env.MIS_REVIEW_EMAIL_TO) || '' }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "87417490-b2bc-500c-ab20-7023d497790f",
+      "name": "Email Configured?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.MIS_REVIEW_EMAIL_FROM }}",
+        "toEmail": "={{ $env.MIS_REVIEW_EMAIL_TO }}",
+        "subject": "={{ $('Compose Notification').first().json.email_subject }}",
+        "emailFormat": "both",
+        "text": "={{ $('Compose Notification').first().json.email_text }}",
+        "html": "={{ $('Compose Notification').first().json.email_html }}",
+        "options": {}
+      },
+      "id": "03af24d6-be72-5f00-ac66-4f55219a8ed9",
+      "name": "Send Review Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        2640,
+        520
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "AXZRPvFxBIKUdrjy",
+          "name": "MIS SMTP"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify($('Attach File Again').first().json) }}",
         "options": {
@@ -425,8 +483,8 @@
         "height": 170,
         "width": 560
       },
-      "id": "9709b297-c88e-51fc-83f1-c721feb7ed38",
-      "name": "Note 16",
+      "id": "0cf05b37-07ff-5186-ac81-6424046d0c3d",
+      "name": "Note 18",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
@@ -589,7 +647,7 @@
         ],
         [
           {
-            "node": "Respond - Result",
+            "node": "Email Configured?",
             "type": "main",
             "index": 0
           }
@@ -597,6 +655,35 @@
       ]
     },
     "Notify": {
+      "main": [
+        [
+          {
+            "node": "Email Configured?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Configured?": {
+      "main": [
+        [
+          {
+            "node": "Send Review Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond - Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Review Email": {
       "main": [
         [
           {

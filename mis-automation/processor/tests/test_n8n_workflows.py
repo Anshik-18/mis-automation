@@ -16,7 +16,7 @@ N8N = Path(__file__).resolve().parents[2] / "n8n"
 FILES = ["mis_discover_files.json", "mis_process_file.json", "mis_reconcile_batch.json", "mis_approve_mapping.json"]
 KNOWN = {"n8n-nodes-base.scheduleTrigger": {1.2}, "n8n-nodes-base.manualTrigger": {1}, "n8n-nodes-base.httpRequest": {4.2},
          "n8n-nodes-base.code": {2}, "n8n-nodes-base.if": {2}, "n8n-nodes-base.webhook": {2},
-         "n8n-nodes-base.respondToWebhook": {1.1}, "n8n-nodes-base.stickyNote": {1}}
+         "n8n-nodes-base.respondToWebhook": {1.1}, "n8n-nodes-base.emailSend": {2.1}, "n8n-nodes-base.stickyNote": {1}}
 TRIGGERS = {"n8n-nodes-base.scheduleTrigger", "n8n-nodes-base.manualTrigger", "n8n-nodes-base.webhook"}
 HAS_NODE = shutil.which("node") is not None
 
@@ -75,7 +75,7 @@ class Structure(unittest.TestCase):
                     self.assertTrue(outs[0], f"{fn}: {n['name']} true branch unconnected")
 
     def test_credentials_are_references_never_secrets(self):
-        allowed = {"httpHeaderAuth", "googleDriveOAuth2Api"}
+        allowed = {"httpHeaderAuth", "googleDriveOAuth2Api", "smtp"}
         text = ""
         for fn in FILES:
             raw = (N8N / fn).read_text(encoding="utf-8")

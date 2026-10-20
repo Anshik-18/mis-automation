@@ -17,6 +17,7 @@ NS = uuid.UUID("6f1c2a3e-0b7d-4c1e-9a55-3f2d6b1e0a10")
 
 CRED_API = {"httpHeaderAuth": {"id": "mis-processor-key", "name": "MIS Processor API Key"}}
 CRED_HOOK = {"httpHeaderAuth": {"id": "mis-webhook-secret", "name": "MIS Webhook Secret"}}
+CRED_SMTP = {"smtp": {"id": "mis-smtp", "name": "MIS SMTP"}}
 CRED_DRIVE = {"googleDriveOAuth2Api": {"id": "mis-google-drive", "name": "MIS Google Drive"}}
 
 P = "$env.MIS_PROCESSOR_URL"
@@ -118,8 +119,13 @@ def note(w: WF, text, pos, w_=420, h_=180):
 # ====================================================================================================== A. Discover
 def discover() -> dict:
     w = WF("MIS - Discover Files")
-    w.add("Every Hour", "n8n-nodes-base.scheduleTrigger", 1.2,
-          {"rule": {"interval": [{"field": "hours", "hoursInterval": 1}]}}, (0, 300))
+    # Normally started on demand: the assistant that drops the reports into Drive calls this webhook when it is done.
+    # The daily run is only a safety net (a missed call, n8n restarted mid-upload); delete the node to rely on the webhook alone.
+    w.add("Scan Now (webhook)", "n8n-nodes-base.webhook", 2, {"httpMethod": "POST", "path": "mis-scan-now",
+          "authentication": "headerAuth", "responseMode": "onReceived", "options": {}},
+          (0, 120), creds=CRED_HOOK, webhookId=str(uuid.uuid5(NS, "webhook/scan-now")))
+    w.add("Daily Safety Net 09:30", "n8n-nodes-base.scheduleTrigger", 1.2,
+          {"rule": {"interval": [{"field": "cronExpression", "expression": "30 9 * * *"}]}}, (0, 300))
     w.add("Run Now (manual)", "n8n-nodes-base.manualTrigger", 1, {}, (0, 480))
     http(w, "Get Scan Window", "GET", f"={{{{ {P} }}}}/v1/discovery/window", (240, 380), retry=True)
     w.add("Init Paging", "n8n-nodes-base.code", 2, code("""
@@ -164,7 +170,8 @@ for (const r of rows) { const k = r.outcome || (r.error ? 'error' : 'unknown'); 
 const attention = rows.filter((r) => ['failed', 'needs_mapping', 'needs_review', 'error'].includes(r.outcome || 'error')).length;
 return [{ json: { total: rows.length, counts, attention } }];
 """), (2640, 480))
-    w.chain("Every Hour", "Get Scan Window")
+    w.chain("Scan Now (webhook)", "Get Scan Window")
+    w.chain("Daily Safety Net 09:30", "Get Scan Window")
     w.chain("Run Now (manual)", "Get Scan Window")
     w.chain("Get Scan Window", "Init Paging", "Build List URL", "List Drive Files", "Register Files", "More Pages?")
     w.link("More Pages?", "Build List URL", 0)          # true: next page
@@ -174,16 +181,26 @@ return [{ json: { total: rows.length, counts, attention } }];
     http(w, "Check Attention", "POST", f"={{{{ {P} }}}}/v1/events/attention", (1920, 700), once=True)
     w.add("Attention Message", "n8n-nodes-base.code", 2, code("""
 const r = $input.first().json;
-return r.count > 0 && r.text ? [{ json: { text: r.text } }] : [];
+return r.count > 0 && r.text ? [{ json: { text: r.text, email_subject: r.email_subject || '[MIS] files need attention', email_html: r.email_html || '' } }] : [];
 """), (2160, 700))
     if_(w, "Notify Configured?", "={{ $env.MIS_NOTIFY_WEBHOOK_URL || '' }}", "string", "notEmpty", None, (2400, 700))
     w.add("Notify Attention", "n8n-nodes-base.httpRequest", 4.2, {
         "method": "POST", "url": "={{ $env.MIS_NOTIFY_WEBHOOK_URL }}", "sendBody": True, "contentType": "json",
         "specifyBody": "json", "jsonBody": "={{ JSON.stringify({ text: $json.text }) }}", "options": {"timeout": 20000}},
         (2640, 620), onError="continueRegularOutput")
+    if_(w, "Email Configured?", "={{ ($('Attention Message').first().json.email_html && $env.MIS_REVIEW_EMAIL_TO) || '' }}", "string", "notEmpty", None, (2640, 800))
+    w.add("Send Attention Email", "n8n-nodes-base.emailSend", 2.1, {
+        "fromEmail": "={{ $env.MIS_REVIEW_EMAIL_FROM }}", "toEmail": "={{ $env.MIS_REVIEW_EMAIL_TO }}",
+        "subject": "={{ $('Attention Message').first().json.email_subject }}", "emailFormat": "both",
+        "text": "={{ $('Attention Message').first().json.text }}",
+        "html": "={{ $('Attention Message').first().json.email_html }}", "options": {}},
+        (2880, 800), creds=CRED_SMTP, onError="continueRegularOutput")
     w.link("Complete Scan", "Check Attention")
     w.chain("Check Attention", "Attention Message", "Notify Configured?")
     w.link("Notify Configured?", "Notify Attention", 0)
+    w.link("Notify Configured?", "Email Configured?", 1)
+    w.link("Notify Attention", "Email Configured?")
+    w.link("Email Configured?", "Send Attention Email", 0)
     note(w, "**Discovery**\nHourly. Asks the processor for the scan window (rolling lookback, or further back after downtime), "
             "lists the Drive folder page by page (createdTime filter), registers every file, then processes whatever is pending.\n"
             "Needs: credentials *MIS Processor API Key*, *MIS Google Drive*, *MIS Webhook Secret*; env MIS_PROCESSOR_URL, "
@@ -244,20 +261,30 @@ const j = $input.first().json;
 const orig = $('Attach File Again').first().json;
 const name = orig.filename || ('event ' + orig.event_id);
 let text;
+let email = {};
 if (j.notification) {
-  text = `[MIS] ${name}: new or changed file layout. ${j.notification}`;
+  // the processor already wrote a plain-language change summary (column names and counts only) and a review link
+  text = `[MIS] ${name}: new or changed file layout.\n\n${j.review_markdown || j.notification}` + (j.review_url ? `\n\nReview and approve: ${j.review_url}` : '');
+  email = { email_subject: j.email_subject, email_text: j.email_text, email_html: j.email_html };
 } else if (j.error) {
   text = `[MIS] ${name}: mapping proposal could not be created (${j.error}). A person must submit a mapping.`;
 } else {
   text = `[MIS] ${name}: ${orig.outcome || 'unknown outcome'}.`;
 }
-return [{ json: { text } }];
+return [{ json: { text, ...email } }];
 """), (1980, 300))
     if_(w, "Notify Configured?", "={{ $env.MIS_NOTIFY_WEBHOOK_URL || '' }}", "string", "notEmpty", None, (2200, 300))
     w.add("Notify", "n8n-nodes-base.httpRequest", 4.2, {
         "method": "POST", "url": "={{ $env.MIS_NOTIFY_WEBHOOK_URL }}", "sendBody": True, "contentType": "json",
         "specifyBody": "json", "jsonBody": "={{ JSON.stringify({ text: $json.text }) }}", "options": {"timeout": 20000}},
         (2420, 220), onError="continueRegularOutput")
+    if_(w, "Email Configured?", "={{ ($('Compose Notification').first().json.email_html && $env.MIS_REVIEW_EMAIL_TO) || '' }}", "string", "notEmpty", None, (2420, 400))
+    w.add("Send Review Email", "n8n-nodes-base.emailSend", 2.1, {
+        "fromEmail": "={{ $env.MIS_REVIEW_EMAIL_FROM }}", "toEmail": "={{ $env.MIS_REVIEW_EMAIL_TO }}",
+        "subject": "={{ $('Compose Notification').first().json.email_subject }}", "emailFormat": "both",
+        "text": "={{ $('Compose Notification').first().json.email_text }}",
+        "html": "={{ $('Compose Notification').first().json.email_html }}", "options": {}},
+        (2640, 520), creds=CRED_SMTP, onError="continueRegularOutput")
     w.add("Respond - Result", "n8n-nodes-base.respondToWebhook", 1.1, {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify($('Attach File Again').first().json) }}",
@@ -274,8 +301,11 @@ return [{ json: { text } }];
     w.link("Propose Mapping", "Compose Notification")
     w.chain("Compose Notification", "Notify Configured?")
     w.link("Notify Configured?", "Notify", 0)
-    w.link("Notify Configured?", "Respond - Result", 1)
-    w.link("Notify", "Respond - Result")
+    w.link("Notify Configured?", "Email Configured?", 1)
+    w.link("Notify", "Email Configured?")
+    w.link("Email Configured?", "Send Review Email", 0)
+    w.link("Email Configured?", "Respond - Result", 1)
+    w.link("Send Review Email", "Respond - Result")
     note(w, "**Process one file** (called by Discover, Reconcile and Approve Mapping)\nClaims the event, downloads the file from Drive, "
             "sends it to the processor, which parses/validates/loads it in ONE transaction and marks it processed only after the commit.\n"
             "Unknown or changed layouts are held (needs_mapping) and a redacted mapping proposal is saved and announced for approval - nothing is guessed. Other files that need a person are announced once by *Discover* (\"Check Attention\").",

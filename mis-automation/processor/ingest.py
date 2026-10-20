@@ -317,6 +317,10 @@ def process_event(db: Database, settings: Settings, event_id: int, token: str, d
         return _finish_simple(db, event_id, token, "needs_review", reason="file_too_large")
     with db.connection() as conn:                              # --- phase A: read
         ev = events.check_claim(conn, event_id, token)
+        if ev["portal_id"] is None and ev.get("review_reason") == "unknown_file_name":
+            # a file no portal claims: hold it so the caller can ask for a mapping proposal (portal + layout) for it
+            events.finish(conn, event_id, token, "needs_mapping", reason="unknown_file")
+            return {"outcome": "needs_mapping", "event_id": event_id, "reason": "unknown_file"}
         if ev["portal_id"] is None or ev["report_date"] is None or ev["observed_at"] is None:
             events.finish(conn, event_id, token, "needs_review", reason="event_not_resolved")
             return {"outcome": "needs_review", "reason": "event_not_resolved", "event_id": event_id}
@@ -325,8 +329,11 @@ def process_event(db: Database, settings: Settings, event_id: int, token: str, d
         pkey = conn.execute("SELECT profile_key FROM mis.mapping_profiles WHERE profile_id=%s", (ev["profile_id"],)).fetchone() \
             if ev["profile_id"] else None
         # filename-matched profiles, plus the profile the event was resolved to (covers manual resolution)
+        # a file whose NAME no longer matches any pattern is judged by its content: every active profile of the portal
+        # is a candidate and exactly one must fit the headers
+        name_flag = (ev.get("review_reason") or "") if (ev.get("review_reason") or "").startswith("filename_pattern_changed") else None
         active = [s for s in load_active_specs(conn, portal_code)
-                  if re.match(s.filename_regex, stem) or (pkey and s.profile_key == pkey[0])]
+                  if name_flag or re.match(s.filename_regex, stem) or (pkey and s.profile_key == pkey[0])]
         implies = {r[0] for r in conn.execute("SELECT status_code FROM mis.lead_statuses WHERE implies_disbursement")}
     kind, *rest = _select(active, data) if active else ("no_fit", {"reason": "no_active_profile", "candidates": []})
     sf_status = None
@@ -392,8 +399,8 @@ def process_event(db: Database, settings: Settings, event_id: int, token: str, d
                          (tr.rows_total, tr.rows_total - tr.rows_blank - tr.rows_footer, tr.rows_footer, stats["inserted"],
                           stats["updated"], stats["unchanged"], stats["stale_skipped"], quarantined,
                           json.dumps(footer), sfid))
-            events.finish(conn, event_id, token, "processed", source_file_id=sfid)
-        return {"outcome": "processed", "event_id": event_id, "source_file_id": sfid,
+            events.finish(conn, event_id, token, "processed", source_file_id=sfid, reason=name_flag)
+        return {"outcome": "processed", "event_id": event_id, "source_file_id": sfid, "filename_flag": name_flag,
                 "profile_key": sel.spec.profile_key, "profile_version": sel.spec.version,
                 "report_date": ev["report_date"].isoformat(),
                 "rows": {"total": tr.rows_total, "blank": tr.rows_blank, "footer": tr.rows_footer,

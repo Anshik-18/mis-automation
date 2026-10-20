@@ -1,0 +1,10 @@
+# Reporting portals (where reports are downloaded from). Attribution partners are a separate concept.
+portals:
+  - {code: credme,        display_name: CredMe}
+  - {code: kreditbuddha,  display_name: KreditBuddha}
+  - {code: brightloans,   display_name: BrightLoans}
+  - {code: salarymantra,  display_name: SalaryMantra}
+  - {code: digicredit,    display_name: DigiCredit}
+  - {code: creditsea,     display_name: CreditSea}
+  - {code: paytrust,      display_name: PayTrust}
+  - {code: marketing_tbd, display_name: "Marketing report (portal not yet identified)"}

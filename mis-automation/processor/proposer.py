@@ -66,6 +66,47 @@ SYSTEM = ("You map the columns of a loan-lead report to a fixed set of canonical
           "attribution/UTM field or a money field, do not choose - add an open question instead. No prose outside the JSON.")
 
 
+PORTAL_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{2,30}$")
+AI_READ_SCHEMA = {
+    "type": "object", "additionalProperties": False,
+    "required": ["looks_like_lead_report", "portal_code", "confidence", "reason"],
+    "properties": {"looks_like_lead_report": {"type": "boolean"},
+                   "portal_code": {"type": "string", "maxLength": 31},
+                   "confidence": {"enum": ["high", "medium", "low"]},
+                   "reason": {"type": "string", "maxLength": 240}}}
+AI_READ_SYSTEM = ("You look at the NAME and the COLUMN HEADERS (no data) of a file that arrived in a folder of loan-lead reports "
+                  "from lending portals. Decide whether it looks like a loan-lead / application / disbursement report and which "
+                  "lender or portal it most likely comes from, using only the file name and header names. portal_code must be "
+                  "lowercase letters, digits or underscores (3-31 chars, start with a letter), taken from the name; if the name "
+                  "gives no clue use 'unknown'. Be honest about confidence. Answer with one JSON object matching the schema; "
+                  "no prose outside the JSON.")
+
+
+def derive_portal_code(filename: str) -> str | None:
+    """First word of the file name, e.g. 'NewBank_leads_2026...' -> 'newbank'. None when there is nothing usable."""
+    from .filename_parser import split_extension
+    m = re.match(r"[A-Za-z][A-Za-z0-9]*", split_extension(filename)[0])
+    code = m.group(0).lower() if m else ""
+    return code if PORTAL_CODE_RE.match(code) and code not in {"leads", "lead", "report", "reports", "data", "export", "file", "mis"} else None
+
+
+def ai_read(llm, filename: str, headers: list[str]) -> dict | None:
+    """One extra, tiny LLM call for a file nobody recognises. Names only, validated, advisory: any failure => None."""
+    if llm is None:
+        return None
+    from .filename_parser import split_extension
+    try:
+        raw = llm.complete_json(AI_READ_SYSTEM, json.dumps({"file_name": split_extension(filename)[0][:120],
+                                                            "headers": [h[:80] for h in headers[:80]]}))
+        jsonschema.validate(raw, AI_READ_SCHEMA)
+    except (LLMDisabled, LLMError, jsonschema.ValidationError):
+        return None
+    out = dict(raw)
+    out["reason"] = re.sub(r"\s+", " ", re.sub(r"[\x00-\x1f]", " ", out["reason"])).strip()[:200]
+    out["portal_code"] = out["portal_code"].strip().lower()
+    return out
+
+
 @dataclass
 class Proposal:
     profile_id: int
@@ -349,6 +390,18 @@ def propose(db: Database, settings: Settings, llm, event_id: int, data: bytes, *
         if ev[2] not in ("needs_mapping", "needs_review"):
             raise ValueError(f"event is {ev[2]}; only needs_mapping/needs_review events can be proposed for")
         pid_ = ev[3]
+        ai = None
+        if pid_ is None and not portal_code:
+            # a file nobody recognises: work out a likely portal from its name (+ one advisory AI read), parked inactive
+            # until a person approves its first mapping
+            ai = ai_read(llm, ev[1], table.headers)
+            code = ai["portal_code"] if ai and ai["confidence"] != "low" and PORTAL_CODE_RE.match(ai["portal_code"]) \
+                and ai["portal_code"] != "unknown" else None
+            code = code or derive_portal_code(ev[1])
+            if not code:
+                raise ValueError("a portal cannot be worked out from this file name; pass 'portal'")
+            row = conn.execute("SELECT portal_id FROM mis.reporting_portals WHERE portal_code=%s", (code,)).fetchone()
+            pid_ = row[0] if row else ensure_portal(conn, code, code.title(), active=False)
         if portal_code:
             row = conn.execute("SELECT portal_id FROM mis.reporting_portals WHERE portal_code=%s", (portal_code,)).fetchone()
             if row:
@@ -374,10 +427,18 @@ def propose(db: Database, settings: Settings, llm, event_id: int, data: bytes, *
         if scored and scored[0][0] >= 0.3:
             base = scored[0][1]
         if base and base.status in ("proposed", "draft") and check_compat(base, table.header_keys).level in ("exact", "compatible"):
+            _link_event(conn, settings, ev, pid_, base)             # this file waits for the same pending decision
             return _as_proposal(base, True, False, [])
     spec, used_llm, unknown_statuses = propose_spec(
         table, portal_code=pcode, filename=ev[1], base=base if base and base.status == "active" else None, aliases=aliases,
         canonical_desc=canonical_desc, status_codes=status_codes, llm=llm, profile_key=profile_key)
+    if ai:
+        verdict = "looks like a lead report" if ai["looks_like_lead_report"] else "does NOT look like a lead report"
+        spec = replace(spec, notes=f"AI read: {verdict}; likely portal '{ai['portal_code']}' (confidence {ai['confidence']}). {ai['reason']}")
+        if not ai["looks_like_lead_report"] and ai["confidence"] == "high":
+            spec = replace(spec, open_questions=list(spec.open_questions) + [{
+                "header": None, "blocking": True, "source": "ai",
+                "question": "the AI is confident this is not a loan-lead report; reject it unless you know otherwise"}])
     with db.connection() as conn:
         errs = [e for e in validate_spec(spec, canonical_fields=set(canonical_desc), status_codes=status_codes)
                 if not e.startswith("no column maps to external_lead_id")]      # already an open question
@@ -386,19 +447,25 @@ def propose(db: Database, settings: Settings, llm, event_id: int, data: bytes, *
         pid = insert_spec(conn, spec, status="proposed", proposed_by="ai" if used_llm else "human",
                           derived_from=base.profile_id if base else None)
         saved = load_spec_from_db(conn, pid)
-        info = parse_with_pattern(ev[1], saved.filename_regex, saved.report_date_format, tz=settings.tz,
-                                  uploaded_at=ev[4], range_end_future_policy=settings.range_end_future_policy)
-        if info.ok:
-            conn.execute("""UPDATE mis.drive_file_events SET portal_id=%s, profile_id=%s, report_date=%s, period_start=%s,
-                               period_end=%s, filename_ts=%s, observed_at=%s, status='needs_mapping',
-                               review_reason='awaiting_mapping_approval' WHERE event_id=%s""",
-                         (pid_, pid, info.report_date, info.period_start, info.period_end, info.filename_ts,
-                          info.observed_at, event_id))
-        else:
-            conn.execute("""UPDATE mis.drive_file_events SET portal_id=%s, profile_id=%s, status='needs_review',
-                               review_reason=%s WHERE event_id=%s""",
-                         (pid_, pid, "filename_pattern_proposal_needs_check:" + ",".join(info.issues or ["no_match"]), event_id))
+        _link_event(conn, settings, ev, pid_, saved)
     return _as_proposal(saved, False, used_llm, unknown_statuses)
+
+
+def _link_event(conn, settings: Settings, ev, portal_id: int, spec: ProfileSpec) -> None:
+    """Point the waiting file at the proposal so it is requeued and loaded when the proposal is approved."""
+    info = parse_with_pattern(ev[1], spec.filename_regex, spec.report_date_format, tz=settings.tz,
+                              uploaded_at=ev[4], range_end_future_policy=settings.range_end_future_policy)
+    if info.ok:
+        conn.execute("""UPDATE mis.drive_file_events SET portal_id=%s, profile_id=%s, report_date=%s, period_start=%s,
+                           period_end=%s, filename_ts=%s, observed_at=%s, status='needs_mapping',
+                           review_reason='awaiting_mapping_approval' WHERE event_id=%s""",
+                     (portal_id, spec.profile_id, info.report_date, info.period_start, info.period_end, info.filename_ts,
+                      info.observed_at, ev[0]))
+    else:
+        conn.execute("""UPDATE mis.drive_file_events SET portal_id=%s, profile_id=%s, status='needs_review',
+                           review_reason=%s WHERE event_id=%s""",
+                     (portal_id, spec.profile_id, "filename_pattern_proposal_needs_check:" + ",".join(info.issues or ["no_match"]),
+                      ev[0]))
 
 
 def _as_proposal(spec: ProfileSpec, reused: bool, used_llm: bool, unknown_statuses: list[str]) -> Proposal:

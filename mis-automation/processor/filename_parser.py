@@ -199,3 +199,123 @@ def resolve(
     if not info.ok:
         return Resolution("review", profile=profile, info=info, reason="filename_date_issue:" + ",".join(info.issues))
     return Resolution("ok", profile=profile, info=info)
+
+
+# ============================================================ lenient fallback (name pattern changed) ==========
+# Used only AFTER the strict per-profile patterns failed. The portal is recognised by the START of the name
+# (separators and case ignored: "cred_me", "CredMe" and "CREDME" are the same), the date is read from the name in
+# any UNAMBIGUOUS format, and the file is then judged by its CONTENT (column fit). Every such file carries a flag so
+# a person can see it; nothing here guesses between two readings.
+FLAG_PREFIX = "filename_pattern_changed"
+HARD_ISSUES = {"range_end_after_upload_day", "incomplete_period", "period_end_before_start"}   # stay with a person
+MAX_NAME_AGE_DAYS = 45
+_MONTHS = {m: i for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
+
+
+def norm_name(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
+def portal_by_prefix(name: str, prefixes: dict[str, list[str]]) -> tuple[str | None, str | None]:
+    """-> (portal_code, None) | (None, 'ambiguous_portal_prefix') | (None, None).  Longest matching prefix wins."""
+    n = norm_name(split_extension(name)[0])
+    hits = []
+    for code, plist in prefixes.items():
+        for p in plist:
+            np_ = norm_name(p)
+            if np_ and n.startswith(np_):
+                hits.append((len(np_), code))
+    if not hits:
+        return None, None
+    top = max(h[0] for h in hits)
+    codes = {c for ln, c in hits if ln == top}
+    return (next(iter(codes)), None) if len(codes) == 1 else (None, "ambiguous_portal_prefix")
+
+
+def _mk(y: int, m: int, d: int) -> date | None:
+    try:
+        return date(y, m, d)
+    except ValueError:
+        return None
+
+
+def lenient_dates(stem: str, *, upload_day: date, today: date) -> tuple[list[date], list[str]]:
+    """All plausible dates written in the name, in any unambiguous format. Day/month order that cannot be told
+    apart (05-06-2026) is NOT used; it is reported in notes instead."""
+    found: list[tuple[date, str]] = []
+    notes: list[str] = []
+    for m in re.finditer(r"(?<!\d)(\d{4})[-_./ ](\d{1,2})[-_./ ](\d{1,2})(?!\d)", stem):
+        d = _mk(int(m[1]), int(m[2]), int(m[3]))
+        if d:
+            found.append((d, "yyyy-mm-dd"))
+    for m in re.finditer(r"(?<!\d)(\d{8})(?!\d)", stem):
+        s = m[1]
+        d = _mk(int(s[:4]), int(s[4:6]), int(s[6:]))
+        if d and d.year >= 2020:
+            found.append((d, "yyyymmdd"))
+            continue
+        d = _mk(int(s[4:]), int(s[2:4]), int(s[:2]))
+        if d and d.year >= 2020:
+            found.append((d, "ddmmyyyy"))
+    for m in re.finditer(r"(?<!\d)(\d{1,2})[-_./ ](\d{1,2})[-_./ ](\d{4})(?!\d)", stem):
+        a, b, y = int(m[1]), int(m[2]), int(m[3])
+        if a > 12 >= b:
+            d, how = _mk(y, b, a), "dd-mm-yyyy"
+        elif b > 12 >= a:
+            d, how = _mk(y, a, b), "mm-dd-yyyy"
+        elif a == b:
+            d, how = _mk(y, a, b), "dd-mm-yyyy"
+        else:
+            notes.append("date_in_name_ambiguous_day_month")
+            continue
+        if d:
+            found.append((d, how))
+    for m in re.finditer(r"(?<![A-Za-z0-9])(\d{1,2})[-_ ]?([A-Za-z]{3,9})[-_ ,]*(\d{4})(?!\d)", stem):
+        mon = _MONTHS.get(m[2][:3].lower())
+        d = _mk(int(m[3]), mon, int(m[1])) if mon else None
+        if d:
+            found.append((d, "dd-mon-yyyy"))
+    for m in re.finditer(r"(?<![A-Za-z])([A-Za-z]{3,9})[-_ ]?(\d{1,2})[-_ ,]+(\d{4})(?!\d)", stem):
+        mon = _MONTHS.get(m[1][:3].lower())
+        d = _mk(int(m[3]), mon, int(m[2])) if mon else None
+        if d:
+            found.append((d, "mon-dd-yyyy"))
+    plausible = []
+    for d, how in found:
+        if MIN_PLAUSIBLE_DATE <= d <= today + timedelta(days=1) and d >= upload_day - timedelta(days=MAX_NAME_AGE_DAYS):
+            plausible.append((d, how))
+        else:
+            notes.append("date_in_name_implausible")
+    dates = sorted({d for d, _ in plausible})
+    hows = {d: h for d, h in plausible}
+    notes += [f"read_as_{hows[d]}" for d in dates]
+    return dates, notes
+
+
+@dataclass
+class LenientResult:
+    status: str                      # 'ok' | 'review'
+    portal_code: str | None = None
+    report_date: date | None = None
+    observed_at: datetime | None = None
+    flag: str | None = None          # stored in review_reason, e.g. filename_pattern_changed:read_as_ddmmyyyy
+    reason: str | None = None        # when status == 'review'
+
+
+def resolve_lenient(name: str, portal_code: str, *, tz: ZoneInfo, uploaded_at: datetime,
+                    now: datetime | None = None) -> LenientResult:
+    stem = split_extension(name)[0]
+    now = (now or datetime.now(tz)).astimezone(tz)
+    up = uploaded_at.astimezone(tz)
+    dates, notes = lenient_dates(stem, upload_day=up.date(), today=now.date())
+    if len(dates) > 1:
+        return LenientResult("review", portal_code, reason="filename_multiple_dates")
+    if dates:
+        rd = dates[0]
+        parts = [n for n in notes if n.startswith("read_as_")]
+    else:
+        rd = up.date()
+        parts = ["no_usable_date_in_name", "report_date_taken_from_upload_day"] + [n for n in notes if not n.startswith("read_as_")]
+    observed = max(up, datetime.combine(rd, time(0, 0), tzinfo=tz))
+    flag = FLAG_PREFIX + ":" + ",".join(dict.fromkeys(parts + [n for n in notes if n.startswith("date_in_name_")]))
+    return LenientResult("ok", portal_code, rd, observed, flag[:200])

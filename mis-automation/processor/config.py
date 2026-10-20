@@ -32,6 +32,10 @@ class Settings:
     llm_model: str = "claude-sonnet-5-5"
     llm_timeout_seconds: int = 60
     approved_migrations: tuple = ()           # additive migrations a human has approved, e.g. ("002",)
+    propose_unknown_files: bool = True         # a file nobody recognises gets a mapping proposal (and a review email) instead of just a notice
+    review_secret: str = ""                   # HMAC key for emailed review links; blank = links disabled
+    review_ttl_hours: int = 48
+    public_base_url: str = ""                 # where a person's browser reaches the processor, e.g. https://mis.example.com
     pool_min_size: int = 1
     pool_max_size: int = 5
     extra: dict = field(default_factory=dict)
@@ -62,6 +66,10 @@ class Settings:
             llm_model=e.get("MIS_LLM_MODEL", cls.llm_model),
             llm_timeout_seconds=int(e.get("MIS_LLM_TIMEOUT_SECONDS", cls.llm_timeout_seconds)),
             approved_migrations=tuple(x.strip() for x in e.get("MIS_APPROVED_MIGRATIONS", "").split(",") if x.strip()),
+            propose_unknown_files=_bool(e.get("MIS_PROPOSE_UNKNOWN_FILES"), True),
+            review_secret=e.get("MIS_REVIEW_SECRET", ""),
+            review_ttl_hours=int(e.get("MIS_REVIEW_TTL_HOURS", cls.review_ttl_hours)),
+            public_base_url=e.get("MIS_PUBLIC_BASE_URL", "").rstrip("/"),
             pool_min_size=int(e.get("MIS_POOL_MIN", cls.pool_min_size)),
             pool_max_size=int(e.get("MIS_POOL_MAX", cls.pool_max_size)),
         )

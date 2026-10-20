@@ -1,0 +1,625 @@
+{
+  "name": "MIS - Process File",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mis-process-file",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "870a6cb0-062b-59c5-87af-1b3ddcb67554",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mis-webhook-secret",
+          "name": "MIS Webhook Secret"
+        }
+      },
+      "webhookId": "cf966005-f0ee-5b34-8bb1-949012d71837"
+    },
+    {
+      "parameters": {
+        "jsCode": "const b = $input.first().json.body || {};\nconst id = Number(b.event_id);\nif (!Number.isInteger(id) || id <= 0) throw new Error('event_id must be a positive integer');\nif (!b.drive_file_id || !/^[A-Za-z0-9_-]+$/.test(b.drive_file_id)) throw new Error('drive_file_id missing or malformed');\nreturn [{ json: { event_id: id, drive_file_id: b.drive_file_id, filename: String(b.filename || '') } }];\n"
+      },
+      "id": "cb450961-ba58-5026-8803-1957dfe1dac1",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.MIS_PROCESSOR_URL + '/v1/events/' + $json.event_id + '/claim' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "3b94443e-5207-5812-a8f1-ebef2f43cc2e",
+      "name": "Claim Event",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mis-processor-key",
+          "name": "MIS Processor API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "ed758ecf-3ef9-5123-9c3d-a9cba78aac82",
+              "leftValue": "={{ $json.claim_token || '' }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f546d8ea-9e9d-54fb-9945-a0fb196d4156",
+      "name": "Claimed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ outcome: 'skipped_not_claimable', event_id: $('Validate Input').first().json.event_id }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "03919ae8-5b93-58e4-9d64-e376a8924f06",
+      "name": "Respond - Not Claimable",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://www.googleapis.com/drive/v3/files/' + $('Validate Input').first().json.drive_file_id + '?alt=media&supportsAllDrives=true' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "options": {
+          "timeout": 300000,
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      },
+      "id": "df1ab1b0-ff37-5e07-879c-b31462cc8196",
+      "name": "Download From Drive",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        300
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "mis-google-drive",
+          "name": "MIS Google Drive"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.MIS_PROCESSOR_URL + '/v1/events/' + $('Validate Input').first().json.event_id + '/fail' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ claim_token: $('Claim Event').first().json.claim_token, error: String(($json.error && $json.error.message) || 'download failed').slice(0, 150) }) }}",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "193f4334-c2d5-5bbc-a527-f492786a5f0f",
+      "name": "Report Download Failure",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        480
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mis-processor-key",
+          "name": "MIS Processor API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ outcome: 'failed', stage: 'download', event_id: $('Validate Input').first().json.event_id, event_status: $json.status || null }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "75128bbc-e8e0-5604-a3c4-01eb36b710c3",
+      "name": "Respond - Download Failed",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.MIS_PROCESSOR_URL + '/v1/events/' + $('Validate Input').first().json.event_id + '/process' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "claim_token",
+              "value": "={{ $('Claim Event').first().json.claim_token }}"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 600000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "33a4d47f-c181-5511-a724-23720d98a506",
+      "name": "Process In Processor",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mis-processor-key",
+          "name": "MIS Processor API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// The HTTP node drops the file; put the downloaded bytes back so a mapping proposal can use them.\nconst res = $input.first().json;\nconst dl = $('Download From Drive').first();\nreturn [{ json: { ...res, event_id: $('Validate Input').first().json.event_id, filename: $('Validate Input').first().json.filename }, binary: dl.binary }];\n"
+      },
+      "id": "f7de2c52-e599-5504-94b1-5529dc25fae3",
+      "name": "Attach File Again",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "a605323b-d942-54b4-8ada-2dd7e23d0442",
+              "leftValue": "={{ $json.outcome || '' }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "needs_mapping"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "7a7dc8f6-0bff-54d8-8d53-1c98eab1d8f8",
+      "name": "Needs Mapping?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.MIS_PROCESSOR_URL }}/v1/mapping/propose",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "event_id",
+              "value": "={{ $json.event_id }}"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 300000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "6ee229aa-3a95-5db7-91f9-97a854ccb75f",
+      "name": "Propose Mapping",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mis-processor-key",
+          "name": "MIS Processor API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Text for humans. Contains file names, ids and counts only - never customer data.\nconst j = $input.first().json;\nconst orig = $('Attach File Again').first().json;\nconst name = orig.filename || ('event ' + orig.event_id);\nlet text;\nif (j.notification) {\n  text = `[MIS] ${name}: new or changed file layout. ${j.notification}`;\n} else if (j.error) {\n  text = `[MIS] ${name}: mapping proposal could not be created (${j.error}). A person must submit a mapping.`;\n} else {\n  text = `[MIS] ${name}: ${orig.outcome || 'unknown outcome'}.`;\n}\nreturn [{ json: { text } }];\n"
+      },
+      "id": "5b7f82a6-d795-5dc0-b831-a972417bab09",
+      "name": "Compose Notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "7d6f8a03-fbd6-5f77-93db-6917fae216f8",
+              "leftValue": "={{ $env.MIS_NOTIFY_WEBHOOK_URL || '' }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c4be09b9-36a0-5f6f-87f1-9f19f5424293",
+      "name": "Notify Configured?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.MIS_NOTIFY_WEBHOOK_URL }}",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $json.text }) }}",
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "eeffd935-8abd-5d8b-abb7-6720655c6254",
+      "name": "Notify",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2420,
+        220
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($('Attach File Again').first().json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "96fffe68-0717-57e1-8a9a-dde2c4f4b9ce",
+      "name": "Respond - Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2640,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "content": "**Process one file** (called by Discover, Reconcile and Approve Mapping)\nClaims the event, downloads the file from Drive, sends it to the processor, which parses/validates/loads it in ONE transaction and marks it processed only after the commit.\nUnknown or changed layouts are held (needs_mapping) and a redacted mapping proposal is saved and announced for approval - nothing is guessed. Other files that need a person are announced once by *Discover* (\"Check Attention\").",
+        "height": 170,
+        "width": 560
+      },
+      "id": "9709b297-c88e-51fc-83f1-c721feb7ed38",
+      "name": "Note 16",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        40
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Claim Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim Event": {
+      "main": [
+        [
+          {
+            "node": "Claimed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claimed?": {
+      "main": [
+        [
+          {
+            "node": "Download From Drive",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond - Not Claimable",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download From Drive": {
+      "main": [
+        [
+          {
+            "node": "Process In Processor",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Report Download Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report Download Failure": {
+      "main": [
+        [
+          {
+            "node": "Respond - Download Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process In Processor": {
+      "main": [
+        [
+          {
+            "node": "Attach File Again",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach File Again": {
+      "main": [
+        [
+          {
+            "node": "Needs Mapping?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Mapping?": {
+      "main": [
+        [
+          {
+            "node": "Propose Mapping",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond - Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Propose Mapping": {
+      "main": [
+        [
+          {
+            "node": "Compose Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compose Notification": {
+      "main": [
+        [
+          {
+            "node": "Notify Configured?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Configured?": {
+      "main": [
+        [
+          {
+            "node": "Notify",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond - Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify": {
+      "main": [
+        [
+          {
+            "node": "Respond - Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Kolkata",
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "tags": [],
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "versionId": "9a79e8bc-0f05-5882-9993-7925e01cfe72"
+}

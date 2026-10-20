@@ -10,7 +10,7 @@ from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
 from .drive_metadata import DriveFile
-from .filename_parser import ProfileRef, Resolution, resolve
+from .filename_parser import (HARD_ISSUES, ProfileRef, Resolution, portal_by_prefix, resolve, resolve_lenient)
 
 OPEN_STATES = ("discovered", "failed", "needs_mapping", "needs_review", "claimed")
 TERMINAL_OK = ("processed", "duplicate_content", "empty", "skipped")
@@ -35,23 +35,54 @@ def profile_refs(conn) -> tuple[list[ProfileRef], dict[int, str]]:
 
 
 def register(conn, f: DriveFile, *, tz: ZoneInfo, range_policy: str, hints: set[str] | None = None,
-             now: datetime | None = None) -> dict:
+             now: datetime | None = None, prefixes: dict[str, list[str]] | None = None,
+             propose_unknown: bool = False) -> dict:
     """Idempotently records a Drive file version and decides its first state. Never alters an existing event."""
     ok, why = f.eligibility()
     refs, pstatus = profile_refs(conn)
     status, reason, res = "discovered", None, None
+    lenient_row = None                                   # (portal_id, LenientResult|None) when the name was read leniently
     if not ok:
         status, reason = "skipped", why
     else:
         res = resolve(f.name, refs, tz=tz, uploaded_at=f.created_at, folder_portal_hints=hints,
                       range_end_future_policy=range_policy, now=now)
-        if res.status == "review":
+        lenient = None
+        if res.status == "review" and prefixes and (res.reason == "no_profile_matches_filename" or (
+                res.reason.startswith("filename_date_issue:") and res.info and not (set(res.info.issues) & HARD_ISSUES))):
+            # the strict pattern failed, but the portal may still be recognisable from the START of the name:
+            # judge the file by its content instead of rejecting it for how the name is written
+            code = res.profile.portal_code if res.profile else None
+            why = None
+            if not code:
+                code, why = portal_by_prefix(f.name, prefixes)
+            if why:
+                res = Resolution("review", reason=why)
+            elif code:
+                lenient = resolve_lenient(f.name, code, tz=tz, uploaded_at=f.created_at, now=now)
+        if lenient is not None:
+            row = conn.execute("SELECT portal_id FROM mis.reporting_portals WHERE portal_code=%s AND is_active", (lenient.portal_code,)).fetchone()
+            if row and lenient.status == "ok":
+                status, reason = "discovered", lenient.flag
+                res = Resolution("ok", info=None)
+                lenient_row = (row[0], lenient)
+            else:
+                status, reason = "needs_review", lenient.reason or "no_profile_matches_filename"
+                res = Resolution("review", reason=reason)
+                if row:
+                    lenient_row = (row[0], None)
+        elif res.status == "review" and propose_unknown and res.reason == "no_profile_matches_filename":
+            # nobody recognises this file: let the pipeline open it and draft a mapping (and a review email) for it
+            status, reason = "discovered", "unknown_file_name"
+        elif res.status == "review":
             status, reason = "needs_review", res.reason
             if res.candidates:
                 reason += ":" + ",".join(res.candidates)
         elif pstatus.get(res.profile.profile_id) != "active":
             status, reason = "needs_mapping", "profile_not_approved"
     info = res.info if res else None
+    l_portal = lenient_row[0] if lenient_row else None
+    l_res = lenient_row[1] if lenient_row else None
     row = conn.execute("""
         INSERT INTO mis.drive_file_events
           (drive_file_id, version_key, original_filename, mime_type, size_bytes, drive_md5, drive_created_at,
@@ -61,10 +92,12 @@ def register(conn, f: DriveFile, *, tz: ZoneInfo, range_policy: str, hints: set[
         ON CONFLICT (drive_file_id, version_key) DO NOTHING
         RETURNING event_id, status""",
         (f.file_id, f.version_key, f.name, f.mime_type, f.size_bytes, f.md5, f.created_at, f.modified_at,
-         list(f.parents), res.profile.portal_id if res and res.profile else None,
+         list(f.parents), res.profile.portal_id if res and res.profile else l_portal,
          res.profile.profile_id if res and res.profile else None,
-         info.report_date if info else None, info.period_start if info else None, info.period_end if info else None,
-         info.filename_ts if info else None, info.observed_at if info else None, status, reason)).fetchone()
+         info.report_date if info else (l_res.report_date if l_res else None),
+         info.period_start if info else None, info.period_end if info else None,
+         info.filename_ts if info else None, info.observed_at if info else (l_res.observed_at if l_res else None),
+         status, reason)).fetchone()
     if row:
         return {"event_id": row[0], "status": row[1], "is_new": True, "reason": reason, "drive_file_id": f.file_id}
     ex = conn.execute("SELECT event_id, status, review_reason FROM mis.drive_file_events "
@@ -109,14 +142,15 @@ def finish(conn, event_id: int, token: str, status: str, *, source_file_id: int 
 
 def check_claim(conn, event_id: int, token: str) -> dict:
     row = conn.execute("""SELECT event_id, drive_file_id, original_filename, portal_id, profile_id, report_date,
-                                 period_start, period_end, observed_at, drive_created_at, size_bytes, source_file_id
+                                 period_start, period_end, observed_at, drive_created_at, size_bytes, source_file_id,
+                                 review_reason
                           FROM mis.drive_file_events
                           WHERE event_id=%s AND claim_token=%s::uuid AND status='claimed' AND lease_expires_at > now()""",
                        (event_id, token)).fetchone()
     if not row:
         raise LostClaim(f"event {event_id}: no live claim for this token")
     keys = ("event_id", "drive_file_id", "filename", "portal_id", "profile_id", "report_date", "period_start",
-            "period_end", "observed_at", "drive_created_at", "size_bytes", "source_file_id")
+            "period_end", "observed_at", "drive_created_at", "size_bytes", "source_file_id", "review_reason")
     return dict(zip(keys, row))
 
 
@@ -200,8 +234,9 @@ def attention(conn) -> list[dict]:
     row = conn.execute("SELECT value FROM mis.service_state WHERE state_key=%s FOR UPDATE", (ATTENTION_KEY,)).fetchone()
     seen = dict((row[0] if row else {}).get("ids", {}))
     rows = conn.execute("""SELECT event_id, original_filename, status, review_reason, last_error FROM mis.drive_file_events
-                           WHERE status IN ('needs_review','needs_mapping','dead')
-                             AND NOT (status='needs_mapping' AND review_reason='awaiting_mapping_approval')
+                           WHERE (status IN ('needs_review','needs_mapping','dead')
+                                  AND NOT (status='needs_mapping' AND review_reason='awaiting_mapping_approval'))
+                              OR (status='processed' AND review_reason LIKE 'filename_pattern_changed%')
                            ORDER BY event_id""").fetchall()
     fresh = [r for r in rows if seen.get(str(r[0])) != r[2]]
     if fresh:

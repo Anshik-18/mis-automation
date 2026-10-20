@@ -47,7 +47,7 @@ class PgCase(unittest.TestCase):
         admin.execute(f"CREATE DATABASE {cls.dbname}")
         admin.close()
         cls.url = f"{BASE} dbname={cls.dbname}"
-        migrate.run(cls.url, approved=tuple(x for x in os.environ.get("MIS_TEST_APPROVED", "002,003").split(",") if x))
+        migrate.run(cls.url, approved=tuple(x for x in os.environ.get("MIS_TEST_APPROVED", "002,003,004").split(",") if x))
         c = connect(cls.url)
         seed.seed(c, fx.SEED_DIR)
         keys = None if cls.ACTIVATE == "all" else set(cls.ACTIVATE)

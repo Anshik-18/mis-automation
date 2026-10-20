@@ -344,11 +344,12 @@ def load_active_specs(conn, portal_code: str | None = None) -> list[ProfileSpec]
     return [load_spec_from_db(conn, i) for i in ids]
 
 
-def ensure_portal(conn, code: str, display_name: str | None = None) -> int:
+def ensure_portal(conn, code: str, display_name: str | None = None, *, active: bool = True) -> int:
+    """active=False creates a portal that stays invisible to file matching until a person approves its first mapping."""
     with conn.cursor() as cur:
-        cur.execute("""INSERT INTO mis.reporting_portals (portal_code, display_name) VALUES (%s, %s)
+        cur.execute("""INSERT INTO mis.reporting_portals (portal_code, display_name, is_active) VALUES (%s, %s, %s)
                        ON CONFLICT (portal_code) DO UPDATE SET portal_code = EXCLUDED.portal_code
-                       RETURNING portal_id""", (code, display_name or code))
+                       RETURNING portal_id""", (code, display_name or code, active))
         return cur.fetchone()[0]
 
 
@@ -431,3 +432,30 @@ def approve_and_activate(conn, profile_id: int, approved_by: str, accept_flags: 
                        WHERE portal_id=%s AND profile_key=%s AND status='active'""", (portal_id, key))
         cur.execute("""UPDATE mis.mapping_profiles SET status='active', approved_by=%s, approved_at=now(),
                               activated_at=now() WHERE profile_id=%s""", (approved_by.strip(), profile_id))
+        cur.execute("UPDATE mis.reporting_portals SET is_active=true WHERE portal_id=%s AND NOT is_active", (portal_id,))
+
+
+def reject_available(conn) -> bool:
+    """True once migration 004 (the 'rejected' status) is applied."""
+    return bool(conn.execute("""SELECT 1 FROM information_schema.columns WHERE table_schema='mis'
+                                AND table_name='mapping_profiles' AND column_name='rejected_by'""").fetchone())
+
+
+def reject_profile(conn, profile_id: int, rejected_by: str, reason: str = "") -> list[int]:
+    """draft/proposed -> rejected. Files held for this proposal move to needs_review (they are NOT requeued and will not
+    be picked up by another proposal until someone proposes again). Returns the held event ids. The caller commits."""
+    if not rejected_by or not rejected_by.strip():
+        raise ProfileSpecError("rejected_by is required")
+    if not reject_available(conn):
+        raise ProfileSpecError("schema_gap: migration 004 (profile rejection) is not applied; add 004 to MIS_APPROVED_MIGRATIONS")
+    row = conn.execute("SELECT status FROM mis.mapping_profiles WHERE profile_id=%s FOR UPDATE", (profile_id,)).fetchone()
+    if not row:
+        raise KeyError("profile not found")
+    if row[0] not in ("draft", "proposed"):
+        raise ProfileSpecError(f"profile is {row[0]}; only draft/proposed profiles can be rejected")
+    conn.execute("""UPDATE mis.mapping_profiles SET status='rejected', rejected_by=%s, rejected_at=now(), rejected_reason=%s
+                    WHERE profile_id=%s""", (rejected_by.strip()[:120], (reason or "").strip()[:500] or None, profile_id))
+    held = conn.execute("""UPDATE mis.drive_file_events SET status='needs_review', review_reason=%s
+                           WHERE profile_id=%s AND status='needs_mapping' RETURNING event_id""",
+                        (f"mapping_rejected:{profile_id}", profile_id)).fetchall()
+    return [r[0] for r in held]

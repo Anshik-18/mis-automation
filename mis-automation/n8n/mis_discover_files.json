@@ -3,17 +3,41 @@
   "nodes": [
     {
       "parameters": {
+        "httpMethod": "POST",
+        "path": "mis-scan-now",
+        "authentication": "headerAuth",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "a6bf6050-edd3-56af-8c9d-e1a1f35ce9f9",
+      "name": "Scan Now (webhook)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        120
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "41lhDxjpRqgQNT6l",
+          "name": "MIS Webhook Secret"
+        }
+      },
+      "webhookId": "481810af-4ba1-588e-9b46-3a269bd8f256"
+    },
+    {
+      "parameters": {
         "rule": {
           "interval": [
             {
-              "field": "hours",
-              "hoursInterval": 1
+              "field": "cronExpression",
+              "expression": "30 9 * * *"
             }
           ]
         }
       },
-      "id": "bf4a15ff-9112-5d9c-a73f-a997ee074f0b",
-      "name": "Every Hour",
+      "id": "e0e64763-78da-5f56-8757-dbf2a7e596e9",
+      "name": "Daily Safety Net 09:30",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [
@@ -52,7 +76,7 @@
       ],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "mis-processor-key",
+          "id": "WLXS3bmFHTcdKxnX",
           "name": "MIS Processor API Key"
         }
       },
@@ -75,7 +99,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const init = $('Init Paging').first().json;\nlet token = '';\ntry { token = $('List Drive Files').last().json.nextPageToken || ''; } catch (e) { token = ''; }\nconst esc = (s) => String(s).replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\");\nconst q = `'${esc(init.folder_id)}' in parents and trashed = false and createdTime > '${init.created_after}'`;\nconst p = new URLSearchParams({\n  q, orderBy: 'createdTime', pageSize: '100',\n  fields: 'nextPageToken,files(id,name,mimeType,createdTime,modifiedTime,size,md5Checksum,parents)',\n  supportsAllDrives: 'true', includeItemsFromAllDrives: 'true',\n});\nif (token) p.set('pageToken', token);\nreturn [{ json: { url: 'https://www.googleapis.com/drive/v3/files?' + p.toString() } }];\n"
+        "jsCode": "const init = $('Init Paging').first().json;\nlet token = '';\ntry { token = $('List Drive Files').last().json.nextPageToken || ''; } catch (e) { token = ''; }\nconst esc = (s) => String(s).replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\");\nconst q = `'${esc(init.folder_id)}' in parents and trashed = false and createdTime > '${init.created_after}'`;\n\nlet url = 'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent(q)\n  + '&orderBy=createdTime&pageSize=100'\n  + '&fields=' + encodeURIComponent('nextPageToken,files(id,name,mimeType,createdTime,modifiedTime,size,md5Checksum,parents)')\n  + '&supportsAllDrives=true&includeItemsFromAllDrives=true';\n\nif (token) {\n  url += '&pageToken=' + encodeURIComponent(token);\n}\nreturn [{ json: { url } }];\n"
       },
       "id": "5ec52769-ac46-508a-b4ed-ff624ab1e8c6",
       "name": "Build List URL",
@@ -106,7 +130,7 @@
       ],
       "credentials": {
         "googleDriveOAuth2Api": {
-          "id": "mis-google-drive",
+          "id": "8kpjN5l7nJRdN3TV",
           "name": "MIS Google Drive"
         }
       },
@@ -138,7 +162,7 @@
       ],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "mis-processor-key",
+          "id": "WLXS3bmFHTcdKxnX",
           "name": "MIS Processor API Key"
         }
       },
@@ -202,7 +226,7 @@
       ],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "mis-processor-key",
+          "id": "WLXS3bmFHTcdKxnX",
           "name": "MIS Processor API Key"
         }
       },
@@ -230,7 +254,7 @@
       ],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "mis-processor-key",
+          "id": "WLXS3bmFHTcdKxnX",
           "name": "MIS Processor API Key"
         }
       },
@@ -278,7 +302,7 @@
       ],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "mis-webhook-secret",
+          "id": "41lhDxjpRqgQNT6l",
           "name": "MIS Webhook Secret"
         }
       }
@@ -316,7 +340,7 @@
       ],
       "credentials": {
         "httpHeaderAuth": {
-          "id": "mis-processor-key",
+          "id": "WLXS3bmFHTcdKxnX",
           "name": "MIS Processor API Key"
         }
       },
@@ -324,7 +348,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const r = $input.first().json;\nreturn r.count > 0 && r.text ? [{ json: { text: r.text } }] : [];\n"
+        "jsCode": "const r = $input.first().json;\nreturn r.count > 0 && r.text ? [{ json: { text: r.text, email_subject: r.email_subject || '[MIS] files need attention', email_html: r.email_html || '' } }] : [];\n"
       },
       "id": "1d5a7c43-1c90-501b-9b82-32183ab9b2a9",
       "name": "Attention Message",
@@ -391,12 +415,70 @@
     },
     {
       "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "3be8cc11-a907-52e8-8757-81d3fd54d0c9",
+              "leftValue": "={{ ($('Attention Message').first().json.email_html && $env.MIS_REVIEW_EMAIL_TO) || '' }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1c00ad3-59d5-58a3-843a-439802119076",
+      "name": "Email Configured?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.MIS_REVIEW_EMAIL_FROM }}",
+        "toEmail": "={{ $env.MIS_REVIEW_EMAIL_TO }}",
+        "subject": "={{ $('Attention Message').first().json.email_subject }}",
+        "emailFormat": "both",
+        "text": "={{ $('Attention Message').first().json.text }}",
+        "html": "={{ $('Attention Message').first().json.email_html }}",
+        "options": {}
+      },
+      "id": "3badb73a-488f-5004-baae-531c5cbcc503",
+      "name": "Send Attention Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        2880,
+        800
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "5H5eaNnwf1jQ14X3",
+          "name": "MIS SMTP"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
         "content": "**Discovery**\nHourly. Asks the processor for the scan window (rolling lookback, or further back after downtime), lists the Drive folder page by page (createdTime filter), registers every file, then processes whatever is pending.\nNeeds: credentials *MIS Processor API Key*, *MIS Google Drive*, *MIS Webhook Secret*; env MIS_PROCESSOR_URL, MIS_DRIVE_FOLDER_ID, N8N_INTERNAL_URL. Activate *MIS - Process File* too.",
         "height": 190,
         "width": 520
       },
-      "id": "23a3f1b0-841f-5bc6-91a4-e5c9921a7a73",
-      "name": "Note 17",
+      "id": "56917d87-114e-5cd4-98b9-f83f5c9f93f5",
+      "name": "Note 20",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
@@ -406,7 +488,18 @@
     }
   ],
   "connections": {
-    "Every Hour": {
+    "Scan Now (webhook)": {
+      "main": [
+        [
+          {
+            "node": "Get Scan Window",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily Safety Net 09:30": {
       "main": [
         [
           {
@@ -565,7 +658,7 @@
       "main": [
         [
           {
-            "node": "Notify Configured?",
+            "node": "Email Configured?",
             "type": "main",
             "index": 0
           }
@@ -577,6 +670,47 @@
         [
           {
             "node": "Notify Attention",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Notify Attention": {
+      "main": [
+        [
+          {
+            "node": "Email Configured?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Configured?": {
+      "main": [
+        [
+          {
+            "node": "Send Attention Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify Configured?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Attention Email": {
+      "main": [
+        [
+          {
+            "node": "Notify Configured?",
             "type": "main",
             "index": 0
           }

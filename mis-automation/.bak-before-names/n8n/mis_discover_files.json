@@ -1,0 +1,636 @@
+{
+  "name": "MIS - Discover Files",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mis-scan-now",
+        "authentication": "headerAuth",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "a6bf6050-edd3-56af-8c9d-e1a1f35ce9f9",
+      "name": "Scan Now (webhook)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        120
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "41lhDxjpRqgQNT6l",
+          "name": "MIS Webhook Secret"
+        }
+      },
+      "webhookId": "481810af-4ba1-588e-9b46-3a269bd8f256"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 9 * * *"
+            }
+          ]
+        }
+      },
+      "id": "e0e64763-78da-5f56-8757-dbf2a7e596e9",
+      "name": "Daily Safety Net 09:30",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "2e5cc5a5-463f-5c4e-8eb8-69f034b3d0fc",
+      "name": "Run Now (manual)",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.MIS_PROCESSOR_URL }}/v1/discovery/window",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "23dcec5f-1720-54f4-b826-b52497164384",
+      "name": "Get Scan Window",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        240,
+        380
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "WLXS3bmFHTcdKxnX",
+          "name": "MIS Processor API Key"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "const w = $input.first().json;\nconst folder = $env.MIS_DRIVE_FOLDER_ID;\nif (!folder) throw new Error('MIS_DRIVE_FOLDER_ID is not set');\nif (!w.created_after || !w.scan_started_at) throw new Error('processor returned no scan window');\nreturn [{ json: { created_after: w.created_after, scan_started_at: w.scan_started_at, mode: w.mode, folder_id: folder } }];\n"
+      },
+      "id": "8e78acdd-ce63-5320-bb73-ed0daf96dd1c",
+      "name": "Init Paging",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const init = $('Init Paging').first().json;\nlet token = '';\ntry { token = $('List Drive Files').last().json.nextPageToken || ''; } catch (e) { token = ''; }\nconst esc = (s) => String(s).replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\");\nconst q = `'${esc(init.folder_id)}' in parents and trashed = false and createdTime > '${init.created_after}'`;\n\nlet url = 'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent(q)\n  + '&orderBy=createdTime&pageSize=100'\n  + '&fields=' + encodeURIComponent('nextPageToken,files(id,name,mimeType,createdTime,modifiedTime,size,md5Checksum,parents)')\n  + '&supportsAllDrives=true&includeItemsFromAllDrives=true';\n\nif (token) {\n  url += '&pageToken=' + encodeURIComponent(token);\n}\nreturn [{ json: { url } }];\n"
+      },
+      "id": "5ec52769-ac46-508a-b4ed-ff624ab1e8c6",
+      "name": "Build List URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "bf377296-42e6-5912-b814-cfb12fe6fe4d",
+      "name": "List Drive Files",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        960,
+        380
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "8kpjN5l7nJRdN3TV",
+          "name": "MIS Google Drive"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.MIS_PROCESSOR_URL }}/v1/discovery/register",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ files: $json.files || [] }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "4e3931a2-7586-5767-90f4-f500243442be",
+      "name": "Register Files",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        380
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "WLXS3bmFHTcdKxnX",
+          "name": "MIS Processor API Key"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "72b9ab16-06ee-5717-b9a4-0bbfe944c879",
+              "leftValue": "={{ $('List Drive Files').last().json.nextPageToken || '' }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9fc621de-fd61-5ad2-9a1c-f4723173f2a2",
+      "name": "More Pages?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.MIS_PROCESSOR_URL }}/v1/discovery/complete",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ scan_started_at: $('Init Paging').first().json.scan_started_at }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "23d7308f-9d44-5362-99d2-683580be47fe",
+      "name": "Complete Scan",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1680,
+        480
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "WLXS3bmFHTcdKxnX",
+          "name": "MIS Processor API Key"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.MIS_PROCESSOR_URL }}/v1/events/pending?limit=200",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "6bd25448-b9b1-5304-8122-e79161908fde",
+      "name": "Get Pending Events",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1920,
+        480
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "WLXS3bmFHTcdKxnX",
+          "name": "MIS Processor API Key"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const events = $input.first().json.events || [];\nreturn events.map((e) => ({ json: { event_id: e.event_id, drive_file_id: e.drive_file_id, filename: e.filename } }));\n"
+      },
+      "id": "9600b6b3-f113-52d5-853f-73acd24d7f05",
+      "name": "Split Events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_URL }}/webhook/mis-process-file",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ event_id: $json.event_id, drive_file_id: $json.drive_file_id, filename: $json.filename }) }}",
+        "options": {
+          "timeout": 900000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "fa4b414f-a597-57c6-a80f-43424cdb95ae",
+      "name": "Process File",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2400,
+        480
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "41lhDxjpRqgQNT6l",
+          "name": "MIS Webhook Secret"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all().map((i) => i.json);\nconst counts = {};\nfor (const r of rows) { const k = r.outcome || (r.error ? 'error' : 'unknown'); counts[k] = (counts[k] || 0) + 1; }\nconst attention = rows.filter((r) => ['failed', 'needs_mapping', 'needs_review', 'error'].includes(r.outcome || 'error')).length;\nreturn [{ json: { total: rows.length, counts, attention } }];\n"
+      },
+      "id": "62ea8c6f-bf60-5ec6-8147-41ad3f142104",
+      "name": "Summarize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.MIS_PROCESSOR_URL }}/v1/events/attention",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "37804fa1-5698-5fc3-87f6-e526e8dc6a7b",
+      "name": "Check Attention",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1920,
+        700
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "WLXS3bmFHTcdKxnX",
+          "name": "MIS Processor API Key"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $input.first().json;\nreturn r.count > 0 && r.text ? [{ json: { text: r.text } }] : [];\n"
+      },
+      "id": "1d5a7c43-1c90-501b-9b82-32183ab9b2a9",
+      "name": "Attention Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "82de9151-dd1f-54bf-96fd-22afb42f556f",
+              "leftValue": "={{ $env.MIS_NOTIFY_WEBHOOK_URL || '' }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c0319b27-92d3-550c-b391-8521c2703cdd",
+      "name": "Notify Configured?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2400,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.MIS_NOTIFY_WEBHOOK_URL }}",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $json.text }) }}",
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "73795317-39cc-5615-a9a7-02dd3f5a65f1",
+      "name": "Notify Attention",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2640,
+        620
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "content": "**Discovery**\nHourly. Asks the processor for the scan window (rolling lookback, or further back after downtime), lists the Drive folder page by page (createdTime filter), registers every file, then processes whatever is pending.\nNeeds: credentials *MIS Processor API Key*, *MIS Google Drive*, *MIS Webhook Secret*; env MIS_PROCESSOR_URL, MIS_DRIVE_FOLDER_ID, N8N_INTERNAL_URL. Activate *MIS - Process File* too.",
+        "height": 190,
+        "width": 520
+      },
+      "id": "940f59a7-72ad-574a-b1f2-75faccd99cc6",
+      "name": "Note 18",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        40
+      ]
+    }
+  ],
+  "connections": {
+    "Scan Now (webhook)": {
+      "main": [
+        [
+          {
+            "node": "Get Scan Window",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily Safety Net 09:30": {
+      "main": [
+        [
+          {
+            "node": "Get Scan Window",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Now (manual)": {
+      "main": [
+        [
+          {
+            "node": "Get Scan Window",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Scan Window": {
+      "main": [
+        [
+          {
+            "node": "Init Paging",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Init Paging": {
+      "main": [
+        [
+          {
+            "node": "Build List URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build List URL": {
+      "main": [
+        [
+          {
+            "node": "List Drive Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Drive Files": {
+      "main": [
+        [
+          {
+            "node": "Register Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Register Files": {
+      "main": [
+        [
+          {
+            "node": "More Pages?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "More Pages?": {
+      "main": [
+        [
+          {
+            "node": "Build List URL",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Complete Scan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Complete Scan": {
+      "main": [
+        [
+          {
+            "node": "Get Pending Events",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check Attention",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Pending Events": {
+      "main": [
+        [
+          {
+            "node": "Split Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Events": {
+      "main": [
+        [
+          {
+            "node": "Process File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process File": {
+      "main": [
+        [
+          {
+            "node": "Summarize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Attention": {
+      "main": [
+        [
+          {
+            "node": "Attention Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attention Message": {
+      "main": [
+        [
+          {
+            "node": "Notify Configured?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Configured?": {
+      "main": [
+        [
+          {
+            "node": "Notify Attention",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Kolkata",
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "tags": [],
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "versionId": "4e0ce37d-7675-5cde-9c17-1a8a5f726e12"
+}
