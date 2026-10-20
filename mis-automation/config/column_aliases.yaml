@@ -1,0 +1,52 @@
+# Deterministic header aliases used FIRST by the mapping proposer (no LLM needed for recognised names).
+# key = normalised header (lower case, single spaces). `flag` marks aliases that always need a human decision.
+aliases:
+  "lead id":              {field: external_lead_id, transform: text}
+  "leadid":               {field: external_lead_id, transform: text}
+  "lead_id":              {field: external_lead_id, transform: text}
+  "application number":   {field: external_lead_id, transform: text, namespace: application_number, flag: identity_namespace_unconfirmed}
+  "lead status":          {field: lead_status_raw, transform: text}
+  "status":               {field: lead_status_raw, transform: text}
+  "rejection reason":     {field: status_reason, transform: redact_digit_runs}
+  "remark":               {field: status_reason, transform: redact_digit_runs}
+  "remarks":              {field: status_reason, transform: redact_digit_runs}
+  "doable":               {field: is_doable, transform: yes_no_boolean}
+  "lead entry date":      {field: lead_entry_date, transform: date}
+  "created_at":           {field: lead_entry_date, transform: date}
+  "disbursement date":    {field: disbursed_date, transform: date}
+  "disbursment date":     {field: disbursed_date, transform: date}
+  "disbursed date":       {field: disbursed_date, transform: date}
+  "disbursal date":       {field: disbursed_date, transform: date}
+  "disbursaldate":        {field: disbursed_date, transform: date}
+  "disbursement amount":  {field: disbursed_amount, transform: number}
+  "disbursment amount":   {field: disbursed_amount, transform: number}
+  "disbursed amt":        {field: disbursed_amount, transform: number}
+  "disbursal amount":     {field: disbursed_amount, transform: number}
+  "disbursalamount":      {field: disbursed_amount, transform: number}
+  "net disbursed amount (inr)": {field: disbursed_amount, transform: number, flag: net_disbursed_amount_semantics}
+  "payout":               {field: payout_amount, transform: number}
+  "payout amount":        {field: payout_amount, transform: number}
+  "loan amt":             {field: requested_loan_amount, transform: number}
+  "loan amount":          {field: requested_loan_amount, transform: number}
+  "loanamount":           {field: requested_loan_amount, transform: number}
+  "approved amt":         {field: approved_amount, transform: number}
+  "approved amount":      {field: approved_amount, transform: number}
+  "approvalamount":       {field: approved_amount, transform: number}
+  "lead source":          {field: lead_source, transform: text}
+  "lead_source":          {field: lead_source, transform: text}
+  "employment type":      {field: employment_type, transform: text}
+  "state":                {field: state, transform: text}
+  "city":                 {field: city, transform: text}
+  "pincode":              {field: pincode, transform: text}
+  "pin code":             {field: pincode, transform: text}
+  "utm source":           {field: utm_source, transform: text}
+  "utm_source":           {field: utm_source, transform: text}
+  "utm medium":           {field: utm_medium, transform: text}
+  "medium":               {field: utm_medium, transform: text}
+  "utm campaign":         {field: utm_campaign, transform: text}
+  "campaign":             {field: utm_campaign, transform: text}
+  "ppc_campaign":         {field: utm_campaign, transform: text}
+  "utm term":             {field: utm_term, transform: text}
+  "utm_campaign":         {field: utm_campaign, transform: text}
+  "utm_medium":           {field: utm_medium, transform: text}
+  "utm_term":             {field: utm_term, transform: text}

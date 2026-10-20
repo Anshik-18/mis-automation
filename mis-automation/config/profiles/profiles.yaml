@@ -1,0 +1,64 @@
+# One entry per (portal, report). `layout` pulls columns/status map/validation from profiles/layouts/<layout>.yaml.
+# Seeded as status "proposed": a person must approve (README) - nothing here is auto-activated.
+profiles:
+  - portal: credme
+    profile_key: credme_leads_daily
+    layout: std21
+    filename_regex: '^CREDME_CLICKPE_ALL_LEADS_(?P<report_date>\d{8})_(?P<report_time>\d{6})$'
+    attribution_rules:
+      - {priority: 1, source_field: utm_medium, strip_prefixes: [], organic_values: [ORGANIC]}
+  - portal: kreditbuddha
+    profile_key: kreditbuddha_leads_daily
+    layout: std21
+    filename_regex: '^kreditbuddha_CLICKPE_leads_(?P<report_date>\d{8})_(?P<report_time>\d{6})$'
+    attribution_rules:
+      - {priority: 1, source_field: utm_campaign, strip_prefixes: [CLICKPE], organic_values: [ORGANIC]}
+  - portal: brightloans
+    profile_key: brightloans_leads_daily
+    layout: std21
+    filename_regex: '^brightloans_leads_(?P<report_date>\d{8})-[0-9a-f]{8}$'
+    attribution_rules:
+      - {priority: 1, source_field: utm_campaign, strip_prefixes: [CLICKPE], organic_values: [ORGANIC]}
+  - portal: salarymantra
+    profile_key: salarymantra_leads_daily
+    layout: std21
+    filename_regex: '^salarymantra_CLICKPE_leads_(?P<report_date>\d{8})-[0-9a-f]{8}$'
+    attribution_rules:
+      - {priority: 1, source_field: utm_campaign, strip_prefixes: [CLICKPE], organic_values: [ORGANIC]}
+  - portal: digicredit
+    profile_key: digicredit_leads
+    layout: dc18
+    filename_regex: '^digicredit_leads_(?P<period_start>\d{8})_(?P<period_end>\d{8})-[0-9a-f]{8}$'
+    attribution_rules:
+      - {priority: 1, source_field: utm_campaign, strip_prefixes: [basic_referral], organic_values: []}
+  - portal: kreditbuddha
+    profile_key: kreditbuddha_leads_range
+    layout: dc18
+    # Business confirmed this unnamed export is KreditBuddha's. Open item: its 23 UUIDs for 19 Oct also appear in
+    # the DigiCredit-named file (README "Open questions").
+    filename_regex: '^leads_(?P<period_start>\d{8})_(?P<period_end>\d{8})$'
+    attribution_rules:
+      - {priority: 1, source_field: utm_campaign, strip_prefixes: [basic_referral], organic_values: []}
+  - portal: creditsea
+    profile_key: creditsea_disbursed
+    layout: cs7
+    filename_regex: '^creditsea_disbursed_cases_(?P<report_date>\d{4}-\d{2}-\d{2})-[0-9a-f]{8}$'
+    attribution_rules:
+      - {priority: 1, source_field: utm_campaign, strip_prefixes: [], organic_values: []}
+      - {priority: 2, source_field: utm_medium, strip_prefixes: [], organic_values: []}
+    review_flags: [net_disbursed_amount_semantics, application_number_is_separate_namespace]
+    notes: "Net Disbursed Amount is mapped to disbursed_amount only if the business confirms the rule. Application Number is a separate namespace; unmatched rows are quarantined until a verified crosswalk exists."
+  - portal: paytrust
+    profile_key: paytrust_leads
+    layout: mkt34
+    filename_regex: '^paytrust_leads_(?P<report_date>\d{4}-\d{2}-\d{2})-[0-9a-f]{8}$'
+    attribution_rules:
+      - {priority: 1, source_field: utm_campaign, strip_prefixes: [clickpe], organic_values: [existing]}
+  - portal: marketing_tbd
+    profile_key: marketing_report
+    layout: mkt36
+    filename_regex: '^Marketing[ _]Report_(?P<report_date>\d{4}-\d{2}-\d{2})(?:_(?P<report_time>\d{2}-\d{2}-\d{2}))?(?:_[0-9a-f]{8})?$'
+    attribution_rules:
+      - {priority: 1, source_field: utm_campaign, strip_prefixes: [clickpe], organic_values: [existing]}
+    review_flags: [portal_not_identified]
+    notes: "Portal unknown: do NOT approve until the business names the portal; then re-seed under that portal."

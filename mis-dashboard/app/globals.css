@@ -1,0 +1,11 @@
+@import "tailwindcss";
+@source "../src";
+
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+}
+
+html { -webkit-text-size-adjust: 100%; }
+body { background: #f8fafc; color: #0f172a; font-family: var(--font-sans); }
+:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .animate-pulse, .animate-spin { animation: none; } }

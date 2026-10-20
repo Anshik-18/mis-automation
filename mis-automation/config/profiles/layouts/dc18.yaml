@@ -1,0 +1,43 @@
+# Layout family "dc18": 18-column lead export with status, approved/disbursed amounts (UUID lead ids).
+# Observed: disbursed amount + date are present exactly on Disbursed / Closed / Auto Disbursal rows, so they are
+# trusted as-is (no only_if_disbursed). Loan Amt is the REQUESTED amount, never a disbursal.
+layout_family: dc18
+report_type: lead_export
+import_mode: incremental
+file_format: csv
+header_row: 1
+identity_namespace: lead_id
+on_unknown_lead: create
+report_date_format: YYYYMMDD
+columns:
+  - {header: Lead ID,           role: canonical, field: external_lead_id, transform: text}
+  - {header: Date,              role: canonical, field: lead_entry_date, transform: date, date_format: DD Mon YYYY}
+  - {header: Name,              role: exclude, sensitivity: personal, exclusion_reason: "customer name: personal data"}
+  - {header: Employment Type,   role: canonical, field: employment_type, transform: text}
+  - {header: Loan Amt,          role: canonical, field: requested_loan_amount, transform: number, sensitivity: financial}
+  - {header: Monthly Income,    role: exclude, sensitivity: financial, exclusion_reason: "income: not needed for reporting (minimisation)"}
+  - {header: CIBIL,             role: exclude, sensitivity: financial, exclusion_reason: "credit score: not needed for reporting (minimisation)"}
+  - {header: Salary Mode,       role: exclude, exclusion_reason: "identical to Employment Type in every reference row (mislabelled duplicate)"}
+  - {header: City,              role: canonical, field: city, transform: text}
+  - {header: State,             role: canonical, field: state, transform: text}
+  - {header: Status,            role: canonical, field: lead_status_raw, transform: text}
+  - {header: Remark,            role: canonical, field: status_reason, transform: redact_digit_runs, sensitivity: free_text}
+  - {header: UTM Source,        role: canonical, field: utm_source, transform: text}
+  - {header: Medium,            role: canonical, field: utm_medium, transform: text}
+  - {header: Campaign,          role: canonical, field: utm_campaign, transform: text, sensitivity: personal}
+  - {header: Approved Amt,      role: canonical, field: approved_amount, transform: number, sensitivity: financial}
+  - {header: Disbursed Amt,     role: canonical, field: disbursed_amount, transform: number, sensitivity: financial}
+  - {header: Disbursement Date, role: canonical, field: disbursed_date, transform: date, date_format: DD Mon YYYY}
+status_map:
+  Rejected: rejected
+  Fresh Lead: registered
+  Approved: approved
+  Disbursed: disbursed
+  Auto Disbursal: disbursed
+  Auto Withdrawal: withdrawn
+  Closed: closed
+validation_rules:
+  - {field: external_lead_id, rule: required}
+  - {field: lead_status_raw, rule: required}
+  - {field: disbursed_amount, rule: min_value, param: {value: 0}}
+  - {field: lead_entry_date, rule: not_after_report_date, param: {tolerance_days: 1}, on_fail: warn}

@@ -1,0 +1,322 @@
+{
+  "name": "MIS - Approve Mapping",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mis-approve-mapping",
+        "authentication": "headerAuth",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "c3eb0eb8-672e-5c16-a33c-f8ea13435e00",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mis-webhook-secret",
+          "name": "MIS Webhook Secret"
+        }
+      },
+      "webhookId": "3751d393-639e-5ccb-afb5-b5aedc6db011"
+    },
+    {
+      "parameters": {
+        "jsCode": "const b = $input.first().json.body || {};\nconst id = Number(b.profile_id);\nif (!Number.isInteger(id) || id <= 0) throw new Error('profile_id must be a positive integer');\nif (!b.approved_by || !String(b.approved_by).trim()) throw new Error('approved_by (who is approving) is required');\nreturn [{ json: { profile_id: id, approved_by: String(b.approved_by).trim(), accept_flags: Array.isArray(b.accept_flags) ? b.accept_flags.map(String) : [] } }];\n"
+      },
+      "id": "cc92bf95-2384-51b8-871d-61ef89f41fd0",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.MIS_PROCESSOR_URL + '/v1/mapping/' + $json.profile_id + '/approve' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ approved_by: $json.approved_by, accept_flags: $json.accept_flags }) }}",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "d98d90b4-f4d8-5f58-ba02-cd79b146b110",
+      "name": "Approve And Activate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mis-processor-key",
+          "name": "MIS Processor API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "703de0bc-80d9-5e13-a25a-844a0c1fc70f",
+              "leftValue": "={{ $json.status || '' }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "active"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f0b13faf-de53-51b8-8437-fe698f470065",
+      "name": "Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.MIS_PROCESSOR_URL }}/v1/events/pending?limit=200",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "144487fc-2f8b-5519-a67c-f5216bc7dcca",
+      "name": "Get Pending Events",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        220
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mis-processor-key",
+          "name": "MIS Processor API Key"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const events = $input.first().json.events || [];\nreturn events.map((e) => ({ json: { event_id: e.event_id, drive_file_id: e.drive_file_id, filename: e.filename } }));\n"
+      },
+      "id": "c1b64154-3549-523b-9896-1a3d22cbb7bd",
+      "name": "Split Events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_URL }}/webhook/mis-process-file",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ event_id: $json.event_id, drive_file_id: $json.drive_file_id, filename: $json.filename }) }}",
+        "options": {
+          "timeout": 900000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "14da4daa-d69f-58ce-bb17-2a66c4a33330",
+      "name": "Process File",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        220
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mis-webhook-secret",
+          "name": "MIS Webhook Secret"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all().map((i) => i.json);\nconst approval = $('Approve And Activate').first().json;\nreturn [{ json: { approved: true, profile_id: approval.profile_id, requeued_events: approval.requeued_events || [], processed: rows.map((r) => ({ event_id: r.event_id, outcome: r.outcome })) } }];\n"
+      },
+      "id": "5d7dc731-fe60-511f-a4d9-644c7f00048a",
+      "name": "Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $input.first().json;\nreturn [{ json: { approved: false, error: r.error || 'not approved', message: r.message || '' } }];\n"
+      },
+      "id": "3a26662d-a616-56f2-a3ba-c69312f4fd25",
+      "name": "Rejected",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "content": "**Approve a mapping proposal**\nPOST {approved_by, profile_id, accept_flags:[...]}. The processor refuses approval while blocking findings or open questions exist, or when a review flag (e.g. net_disbursed_amount_semantics) is not accepted by name. On success the held files are processed.",
+        "height": 160,
+        "width": 560
+      },
+      "id": "ffa352c5-3234-5778-a548-b0e3e8987618",
+      "name": "Note 9",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        40
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Approve And Activate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approve And Activate": {
+      "main": [
+        [
+          {
+            "node": "Approved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approved?": {
+      "main": [
+        [
+          {
+            "node": "Get Pending Events",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Rejected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Pending Events": {
+      "main": [
+        [
+          {
+            "node": "Split Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Events": {
+      "main": [
+        [
+          {
+            "node": "Process File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process File": {
+      "main": [
+        [
+          {
+            "node": "Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Kolkata",
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "tags": [],
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "versionId": "d4e2c77d-fcaf-50f6-befd-f9ff28cc20d7"
+}

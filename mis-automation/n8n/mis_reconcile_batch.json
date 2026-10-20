@@ -1,0 +1,461 @@
+{
+  "name": "MIS - Reconcile Batch",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 10,14,18 * * *"
+            }
+          ]
+        }
+      },
+      "id": "94bf12de-a191-5a62-af23-f7cf11ab2640",
+      "name": "Schedule 10:00 / 14:00 / 18:00 IST",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "10c65a0a-eb8e-5193-932b-63fe2b955f14",
+      "name": "Run Now (manual)",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.MIS_PROCESSOR_URL }}/v1/reconcile/run",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ lookback_days: 2 }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "4970039a-ff75-50eb-ac60-de639ef1c0c7",
+      "name": "Reconcile (check)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        240,
+        380
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mis-processor-key",
+          "name": "MIS Processor API Key"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "769bf255-9410-5326-ac8d-ff56609b8448",
+              "leftValue": "={{ ($json.retry_event_ids || []).length }}",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              },
+              "rightValue": 0
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "323ccab0-af85-548c-a8c3-47bca32fb8df",
+      "name": "Anything To Retry?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        480,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.MIS_PROCESSOR_URL }}/v1/events/pending?limit=200",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "a113e65f-3d4b-5d41-9cfd-62fbbfb76cc6",
+      "name": "Get Pending Events",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        260
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mis-processor-key",
+          "name": "MIS Processor API Key"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const wanted = new Set($('Reconcile (check)').first().json.retry_event_ids || []);\nconst events = $input.first().json.events || [];\nreturn events.filter((e) => wanted.has(e.event_id)).map((e) => ({ json: { event_id: e.event_id, drive_file_id: e.drive_file_id, filename: e.filename } }));\n"
+      },
+      "id": "efd45571-78b3-50c7-81a6-a669ae85dd02",
+      "name": "Select Retries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_INTERNAL_URL }}/webhook/mis-process-file",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ event_id: $json.event_id, drive_file_id: $json.drive_file_id, filename: $json.filename }) }}",
+        "options": {
+          "timeout": 900000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "b41f42df-1bf8-5fc0-9717-9b21b1beeaae",
+      "name": "Retry Process File",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        260
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mis-webhook-secret",
+          "name": "MIS Webhook Secret"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.MIS_PROCESSOR_URL }}/v1/reconcile/run",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ lookback_days: 2 }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "39b5c367-4f98-52b0-8094-68d0ddc2b02d",
+      "name": "Reconcile (final)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1440,
+        380
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mis-processor-key",
+          "name": "MIS Processor API Key"
+        }
+      },
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsCode": "// One item per business day whose situation CHANGED since the last announcement (server-side de-duplication).\nconst out = $input.first().json;\nreturn (out.batches || []).filter((b) => b.notify).map((b) => ({ json: { date: b.date, status: b.status, summary_hash: b.summary_hash, text: b.message } }));\n"
+      },
+      "id": "9ae3db62-7751-50b4-9819-39298144200d",
+      "name": "Batches To Announce",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "94a2dae2-0125-5b2b-9395-21dec339c1f9",
+              "leftValue": "={{ $env.MIS_NOTIFY_WEBHOOK_URL || '' }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9f92fb6b-67d0-5f0e-9104-e7df17832469",
+      "name": "Notify Configured?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.MIS_NOTIFY_WEBHOOK_URL }}",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $json.text }) }}",
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "044f8724-83f8-5797-807e-375b0e49577c",
+      "name": "Send Summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2160,
+        300
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.MIS_PROCESSOR_URL }}/v1/reconcile/ack",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ date: $('Batches To Announce').all()[$itemIndex].json.date, summary_hash: $('Batches To Announce').all()[$itemIndex].json.summary_hash }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "0de1bcc8-cda7-5e7c-a74f-e6fc0b14ceb9",
+      "name": "Acknowledge",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2400,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mis-processor-key",
+          "name": "MIS Processor API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "**Reconcile**\nCompares the expected-report manifest (config/expected_reports.yaml) with the ledger for today and the previous day, re-runs transient failures, then announces only what changed. A day is COMPLETE when every required report is processed.\nNotifications carry report ids, counts and file names only.",
+        "height": 170,
+        "width": 520
+      },
+      "id": "5d4ab30f-6a39-5e81-b266-48d360c535c7",
+      "name": "Note 12",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        40
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule 10:00 / 14:00 / 18:00 IST": {
+      "main": [
+        [
+          {
+            "node": "Reconcile (check)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Now (manual)": {
+      "main": [
+        [
+          {
+            "node": "Reconcile (check)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reconcile (check)": {
+      "main": [
+        [
+          {
+            "node": "Anything To Retry?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anything To Retry?": {
+      "main": [
+        [
+          {
+            "node": "Get Pending Events",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reconcile (final)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Pending Events": {
+      "main": [
+        [
+          {
+            "node": "Select Retries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select Retries": {
+      "main": [
+        [
+          {
+            "node": "Retry Process File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry Process File": {
+      "main": [
+        [
+          {
+            "node": "Reconcile (final)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reconcile (final)": {
+      "main": [
+        [
+          {
+            "node": "Batches To Announce",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batches To Announce": {
+      "main": [
+        [
+          {
+            "node": "Notify Configured?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Configured?": {
+      "main": [
+        [
+          {
+            "node": "Send Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Summary": {
+      "main": [
+        [
+          {
+            "node": "Acknowledge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Kolkata",
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "tags": [],
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "versionId": "a341978c-0eab-5203-84db-2d07208c940c"
+}

@@ -1,0 +1,24 @@
+# Expected daily reports. Copy to config/expected_reports.yaml and edit; point MIS_MANIFEST_PATH at it.
+# This is configuration, not code: add/remove entries as portals are onboarded or retired.
+#   id                      unique snake_case name shown in notifications
+#   portal / profile_key    same keys as the mapping profiles (config/profiles/profiles.yaml)
+#   required                the batch is only COMPLETE when every required report has been processed
+#   days                    weekdays the report is expected (default: every day)
+#   expect_by               HH:MM in the business time zone; after this a missing report is reported as missing
+#   report_date_offset_days report_date = business date + offset (-1 = a file named for yesterday)
+#   allow_empty             a header-only/empty file counts as success (e.g. a portal with no leads some days)
+#   min_files               how many files for the same report_date are needed (default 1)
+timezone: Asia/Kolkata
+reports:
+  - {id: credme_leads_daily,        portal: credme,       profile_key: credme_leads_daily,        required: true,  expect_by: "09:00"}
+  - {id: kreditbuddha_leads_daily,  portal: kreditbuddha, profile_key: kreditbuddha_leads_daily,  required: true,  expect_by: "09:00"}
+  - {id: brightloans_leads_daily,   portal: brightloans,  profile_key: brightloans_leads_daily,   required: true,  expect_by: "09:00"}
+  - {id: salarymantra_leads_daily,  portal: salarymantra, profile_key: salarymantra_leads_daily,  required: true,  expect_by: "09:00"}
+  - {id: digicredit_leads_daily,    portal: digicredit,   profile_key: digicredit_leads,          required: true,  expect_by: "09:00", allow_empty: true}
+  - {id: paytrust_leads_daily,      portal: paytrust,     profile_key: paytrust_leads,            required: true,  expect_by: "09:00", allow_empty: true}
+  # CreditSea needs its mapping approved first (Net Disbursed semantics + Application Number namespace); until then
+  # keep it optional so the batch is not held hostage by a decision that is still open.
+  - {id: creditsea_disbursed_daily, portal: creditsea,    profile_key: creditsea_disbursed,       required: false, expect_by: "09:00"}
+  # The Marketing report's portal is not identified yet; listed as optional.
+  - {id: marketing_report_daily,    portal: marketing_tbd, profile_key: marketing_report,         required: false, expect_by: "09:00", allow_empty: true}
+  # The KreditBuddha unnamed range export (leads_YYYYMMDD_YYYYMMDD) is an ad-hoc backfill, not a daily report.

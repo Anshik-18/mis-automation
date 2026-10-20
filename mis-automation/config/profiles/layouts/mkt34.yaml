@@ -1,0 +1,53 @@
+# Layout family "mkt34": platform export with camelCase headers (PayTrust sample; Marketing sample adds pincode+pancard = mkt36).
+# Document-status / identity columns are excluded by default (minimisation) even though the samples only hold booleans.
+layout_family: mkt34
+report_type: lead_export
+import_mode: incremental
+file_format: xlsx
+header_row: 1
+identity_namespace: lead_id
+on_unknown_lead: create
+report_date_format: YYYY-MM-DD
+columns:
+  - {header: customerId,         role: exclude, sensitivity: personal, exclusion_reason: "customer identifier: personal data"}
+  - {header: leadId,             role: canonical, field: external_lead_id, transform: text}
+  - {header: purpose,            role: extra, extra_key: purpose, transform: text}
+  - {header: loanAmount,         role: canonical, field: requested_loan_amount, transform: number, sensitivity: financial}
+  - {header: monthlyIncome,      role: exclude, sensitivity: financial, exclusion_reason: "income: not needed for reporting (minimisation)"}
+  - {header: salary,             role: canonical, field: employment_type, transform: text}
+  - {header: city,               role: canonical, field: city, transform: text}
+  - {header: state,              role: canonical, field: state, transform: text}
+  - {header: status,             role: canonical, field: lead_status_raw, transform: text}
+  - {header: utm_source,         role: canonical, field: utm_source, transform: text}
+  - {header: lead_source,        role: canonical, field: lead_source, transform: text}
+  - {header: ppc_campaign,       role: canonical, field: utm_campaign, transform: text, sensitivity: personal}
+  - {header: gclid,              role: exclude, exclusion_reason: "ad-click identifier: not needed"}
+  - {header: clid,               role: exclude, exclusion_reason: "ad-click identifier: not needed"}
+  - {header: third_party_id,     role: exclude, exclusion_reason: "third-party identifier: not needed"}
+  - {header: ppc_source,         role: extra, extra_key: ppc_source, transform: text}
+  - {header: created_at,         role: canonical, field: lead_entry_date, transform: date, date_format: "YYYY-MM-DD HH24:MI:SS"}
+  - {header: updated_at,         role: extra, extra_key: source_updated_at, transform: text}
+  - {header: medium,             role: canonical, field: utm_medium, transform: text}
+  - {header: aadhar_Details,     role: exclude, sensitivity: identity_document, exclusion_reason: "identity-document status: sensitive"}
+  - {header: pan_Details,        role: exclude, sensitivity: identity_document, exclusion_reason: "identity-document status: sensitive"}
+  - {header: facematch_Details,  role: exclude, sensitivity: identity_document, exclusion_reason: "biometric status: sensitive"}
+  - {header: bankstatement,      role: exclude, sensitivity: financial, exclusion_reason: "bank-statement status: sensitive"}
+  - {header: approvalAmount,     role: canonical, field: approved_amount, transform: number, sensitivity: financial}
+  - {header: breApproveAmount,   role: extra, extra_key: bre_approve_amount, transform: text}
+  - {header: remarks,            role: canonical, field: status_reason, transform: redact_digit_runs, sensitivity: free_text}
+  - {header: disbursalAmount,    role: canonical, field: disbursed_amount, transform: number, sensitivity: financial}
+  - {header: disbursalDate,      role: canonical, field: disbursed_date, transform: date, date_format: YYYY-MM-DD}
+  - {header: SalaryMode,         role: exclude, exclusion_reason: "salary payment mode: not needed"}
+  - {header: AgentName,          role: exclude, sensitivity: personal, exclusion_reason: "agent name: personal data"}
+  - {header: cbs_risk_grade_v1,  role: exclude, sensitivity: financial, exclusion_reason: "internal risk grade: not needed"}
+  - {header: e_sign,             role: exclude, exclusion_reason: "workflow flag: not needed"}
+  - {header: emandate,           role: exclude, exclusion_reason: "workflow flag: not needed"}
+  - {header: reference,          role: exclude, sensitivity: personal, exclusion_reason: "reference flag: sensitive column name"}
+status_map:
+  Rejected: rejected
+  Fresh_Lead: registered
+  Documents_Received: in_process
+validation_rules:
+  - {field: external_lead_id, rule: required}
+  - {field: lead_status_raw, rule: required}
+  - {field: disbursed_amount, rule: min_value, param: {value: 0}}

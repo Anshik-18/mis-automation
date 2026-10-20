@@ -1,0 +1,6 @@
+# Layout family "mkt36": mkt34 plus `pincode` and `pancard`. Extends mkt34 (see loader: `extends`).
+extends: mkt34
+layout_family: mkt36
+extra_columns:
+  - {header: pincode, role: canonical, field: pincode, transform: text}
+  - {header: pancard, role: exclude, sensitivity: identity_document, exclusion_reason: "PAN: identity document number"}

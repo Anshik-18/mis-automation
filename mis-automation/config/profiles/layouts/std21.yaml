@@ -1,0 +1,55 @@
+# Layout family "std21": CredMe, KreditBuddha, BrightLoans, SalaryMantra daily lead exports (21 columns).
+# Verified against the reference files: footer row "Total ... : n" has a blank Lead ID; the footer disbursed
+# amount equals the sum over rows whose status is DISBURSED only, so disbursement columns count only on
+# disbursed rows (other values are parked in source_attributes, never lost).
+layout_family: std21
+report_type: lead_export
+import_mode: incremental
+file_format: csv
+header_row: 1
+identity_namespace: lead_id
+on_unknown_lead: create
+footer_row_regex: '^\s*Total\b'
+report_date_format: YYYYMMDD
+columns:
+  - {header: Lead ID,            role: canonical, field: external_lead_id, transform: text}
+  - {header: Partner Name,       role: exclude, exclusion_reason: "constant requesting-partner label (CLICKPE); NOT the attribution partner"}
+  - {header: Lead Source,        role: canonical, field: lead_source, transform: text}
+  - {header: UTM Source,         role: canonical, field: utm_source, transform: text}
+  - {header: UTM Medium,         role: canonical, field: utm_medium, transform: text}
+  - {header: UTM Campaign,       role: canonical, field: utm_campaign, transform: text, sensitivity: personal}
+  - {header: UTM Term,           role: canonical, field: utm_term, transform: text}
+  - {header: Lead Status,        role: canonical, field: lead_status_raw, transform: text}
+  - {header: Doable,             role: canonical, field: is_doable, transform: yes_no_boolean}
+  - {header: Disbursment Date,   role: canonical, field: disbursed_date, transform: date, date_format: YYYY-MM-DD, only_if_disbursed: true, parked_key: unconfirmed_disbursement_date}
+  - {header: Disbursment Amount, role: canonical, field: disbursed_amount, transform: number, only_if_disbursed: true, parked_key: unconfirmed_disbursement_amount, sensitivity: financial}
+  - {header: Pricing Model,      role: extra, extra_key: pricing_model, transform: text}
+  - {header: Pricing Type,       role: extra, extra_key: pricing_type, transform: text}
+  - {header: Pricing,            role: extra, extra_key: pricing_value, transform: text}
+  - {header: Payout,             role: canonical, field: payout_amount, transform: number, only_if_disbursed: true, parked_key: unconfirmed_payout, sensitivity: financial}
+  - {header: Rejection Reason,   role: canonical, field: status_reason, transform: redact_digit_runs}
+  - {header: State,              role: canonical, field: state, transform: text}
+  - {header: City,               role: canonical, field: city, transform: text}
+  - {header: Pincode,            role: canonical, field: pincode, transform: text}
+  - {header: Date Of Birth,      role: exclude, sensitivity: personal, exclusion_reason: "date of birth: personal data not needed for reporting"}
+  - {header: Lead Entry Date,    role: canonical, field: lead_entry_date, transform: date, date_format: YYYY-MM-DD}
+status_map:
+  SYSTEM-REJECT: rejected
+  REJECT: rejected          # also matches 'Reject' (case-insensitive)
+  LEAD-REGISTRATION: registered
+  LEAD-PARTIAL: partial
+  LEAD-HOLD: on_hold
+  LEAD-INPROCESS: in_process
+  APPLICATION-NEW: in_process
+  APPLICATION-INPROCESS: in_process
+  APPLICATION-HOLD: on_hold
+  APPLICATION-SEND-BACK: on_hold
+  SANCTION: approved
+  DISBURSE-PENDING: disbursement_pending
+  DISBURSED: disbursed
+validation_rules:
+  - {field: external_lead_id, rule: required}
+  - {field: lead_status_raw, rule: required}
+  - {field: disbursed_amount, rule: min_value, param: {value: 0}}
+  - {field: payout_amount, rule: min_value, param: {value: 0}}
+  - {field: lead_entry_date, rule: not_after_report_date, param: {tolerance_days: 1}, on_fail: warn}

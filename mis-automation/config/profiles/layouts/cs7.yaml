@@ -1,0 +1,25 @@
+# Layout family "cs7": disbursed-cases-only report. Every row is a disbursal; the report names only the leads it
+# lists, so it can enrich but never delete/downgrade. Application Number is a DIFFERENT identifier namespace.
+layout_family: cs7
+report_type: disbursed_cases
+import_mode: enrichment
+file_format: csv
+header_row: 1
+identity_namespace: application_number
+on_unknown_lead: quarantine
+implied_status_code: disbursed
+report_date_format: YYYY-MM-DD
+columns:
+  - {header: User Creation Date,           role: extra, extra_key: user_creation_date, transform: date, date_format: DD Mon YYYY}
+  - {header: Application Number,           role: canonical, field: external_lead_id, transform: text}
+  - {header: Phone Number,                 role: exclude, sensitivity: contact, exclusion_reason: "phone number: personal data; masked in source and not a usable key"}
+  - {header: Net Disbursed Amount (INR),   role: canonical, field: disbursed_amount, transform: number, sensitivity: financial}
+  - {header: Disbursal Date,               role: canonical, field: disbursed_date, transform: date, date_format: DD Mon YYYY}
+  - {header: Medium,                       role: canonical, field: utm_medium, transform: text, sensitivity: personal}
+  - {header: Campaign,                     role: canonical, field: utm_campaign, transform: text, sensitivity: personal}
+status_map: {}
+validation_rules:
+  - {field: external_lead_id, rule: required}
+  - {field: disbursed_amount, rule: required}
+  - {field: disbursed_date, rule: required}
+  - {field: disbursed_amount, rule: min_value, param: {value: 0}}

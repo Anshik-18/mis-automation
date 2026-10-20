@@ -1,0 +1,6 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": { "jsx": "react-jsx", "plugins": [], "incremental": false, "noEmit": true, "types": ["node"], "typeRoots": ["/opt/npm-tools/node_modules/@types"], "noUncheckedIndexedAccess": false },
+  "include": ["shims.d.ts", "../../app/**/*.ts", "../../app/**/*.tsx", "../../src/**/*.ts", "../../src/**/*.tsx", "../../tests/**/*.ts"],
+  "exclude": []
+}
